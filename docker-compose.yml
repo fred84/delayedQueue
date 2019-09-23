@@ -1,0 +1,13 @@
+version: '3'
+
+services:
+  redis:
+    image: redis:4-alpine
+    ports:
+     - "6379:6379"
+
+  toxiproxy:
+    image: shopify/toxiproxy
+    ports:
+      - "8474:8474"
+    network_mode: "host"
