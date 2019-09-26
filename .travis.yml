@@ -23,5 +23,8 @@ cache:
 before_script:
   - "nohup toxiproxy -port 18474 > /tmp/toxiproxy.log 2>&1 &"
 
+travis_run_after_failure:
+  - cat /tmp/toxiproxy.log
+
 script:
   - ./gradlew test
