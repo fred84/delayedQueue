@@ -21,11 +21,11 @@ cache:
     - $HOME/.gradle/wrapper/
 
 before_script:
-  - "nohup toxiproxy -port 18474 > /tmp/toxiproxy.log 2>&1 &"
+  - "toxiproxy -port 18474 &"
   - sleep 3
 
 script:
-  - ./gradlew test --info
+  - ./gradlew test
 
 after_failure:
   - cat /tmp/toxiproxy.log
