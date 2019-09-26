@@ -58,14 +58,14 @@ class RedisDelayedEventServiceTest {
     private RedisDelayedEventService eventService;
     private final ExecutorService executor = Executors.newFixedThreadPool(10);
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private final ToxiproxyClient toxiProxyClient = new ToxiproxyClient("localhost", 8474);
+    private final ToxiproxyClient toxiProxyClient = new ToxiproxyClient("localhost", 18474); // todo move to config
     private Proxy redisProxy;
 
     @BeforeEach
     void flushDb() throws IOException {
         removeOldProxies();
         redisProxy = createRedisProxy();
-        redisClient = RedisClient.create("redis://localhost:63790");
+        redisClient = RedisClient.create("redis://localhost:63790"); // todo move to config
         redisClient.setOptions(
                 ClientOptions.builder()
                         .timeoutOptions(TimeoutOptions.builder().timeoutCommands().fixedTimeout(Duration.ofMillis(500)).build())
