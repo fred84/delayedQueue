@@ -21,8 +21,7 @@ cache:
     - $HOME/.gradle/wrapper/
 
 before_script:
-  - "toxiproxy -port 18474 &"
-  - sleep 3
+  - ./start_toxiproxy.sh
 
 script:
   - ./gradlew test
