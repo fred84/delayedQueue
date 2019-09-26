@@ -1,9 +1,15 @@
 language: java
 
 os: linux
-dist: trusty
+dist: bionic
 jdk:
   - openjdk11
+
+services:
+  - redis-server
+
+before_install:
+  - sudo apt-get install toxiproxy
 
 before_cache:
   - rm -f  $HOME/.gradle/caches/modules-2/modules-2.lock
@@ -15,7 +21,7 @@ cache:
     - $HOME/.gradle/wrapper/
 
 before_script:
-  - ./bin/start-toxiproxy.sh
+  - toxiproxy-server
 
 script:
   - ./gradlew test
