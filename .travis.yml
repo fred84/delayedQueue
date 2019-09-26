@@ -20,6 +20,10 @@ cache:
     - $HOME/.gradle/caches/
     - $HOME/.gradle/wrapper
 
+
+before_script:
+  - curl -v http://dummy:8474/proxies
+
 script:
   - ./gradlew test
 
