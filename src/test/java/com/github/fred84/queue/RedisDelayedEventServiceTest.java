@@ -65,7 +65,7 @@ class RedisDelayedEventServiceTest {
     void flushDb() throws IOException {
         removeOldProxies();
         redisProxy = createRedisProxy();
-        redisClient = RedisClient.create("redis://localhost:63790"); // todo move to config
+        redisClient = RedisClient.create("redis://127.0.1.1:63790"); // todo move to config
         redisClient.setOptions(
                 ClientOptions.builder()
                         .timeoutOptions(TimeoutOptions.builder().timeoutCommands().fixedTimeout(Duration.ofMillis(500)).build())
@@ -329,7 +329,7 @@ class RedisDelayedEventServiceTest {
     }
 
     private Proxy createRedisProxy() throws IOException {
-        return toxiProxyClient.createProxy("redis", "localhost:63790", "localhost:6379"); // todo move to config
+        return toxiProxyClient.createProxy("redis", "127.0.1.1:63790", "localhost:6379"); // todo move to config
     }
 
     private void enqueue(int num) {
