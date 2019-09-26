@@ -21,7 +21,7 @@ cache:
     - $HOME/.gradle/wrapper/
 
 before_script:
-  - toxiproxy-server
+  - toxiproxy
 
 script:
   - ./gradlew test
