@@ -18,13 +18,10 @@ before_cache:
 cache:
   directories:
     - $HOME/.gradle/caches/
-    - $HOME/.gradle/wrapper/
-
-before_script:
-  - ./start_toxiproxy.sh
+    - $HOME/.gradle/wrapper
 
 script:
   - ./gradlew test
 
-after_failure:
-  - cat /tmp/toxiproxy.log
+addons:
+  hostname: dummy
