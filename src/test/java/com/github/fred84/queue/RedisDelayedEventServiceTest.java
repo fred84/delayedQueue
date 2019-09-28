@@ -23,6 +23,7 @@ import io.lettuce.core.api.sync.RedisCommands;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.time.Duration;
+import java.util.Optional;
 import java.util.Random;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -53,19 +54,21 @@ class RedisDelayedEventServiceTest {
         String id;
     }
 
+    private static final String TOXIPROXY_IP = Optional.ofNullable(System.getenv("TOXIPROXY_IP")).orElse("127.0.0.1");
+
     private RedisClient redisClient;
     private RedisCommands<String, String> connection;
     private RedisDelayedEventService eventService;
     private final ExecutorService executor = Executors.newFixedThreadPool(10);
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private final ToxiproxyClient toxiProxyClient = new ToxiproxyClient("127.0.1.1", 8474); // todo move to config
+    private final ToxiproxyClient toxiProxyClient = new ToxiproxyClient(TOXIPROXY_IP, 8474);
     private Proxy redisProxy;
 
     @BeforeEach
     void flushDb() throws IOException {
         removeOldProxies();
         redisProxy = createRedisProxy();
-        redisClient = RedisClient.create("redis://127.0.1.1:63790"); // todo move to config
+        redisClient = RedisClient.create("redis://" + TOXIPROXY_IP + ":63790");
         redisClient.setOptions(
                 ClientOptions.builder()
                         .timeoutOptions(TimeoutOptions.builder().timeoutCommands().fixedTimeout(Duration.ofMillis(500)).build())
@@ -329,7 +332,7 @@ class RedisDelayedEventServiceTest {
     }
 
     private Proxy createRedisProxy() throws IOException {
-        return toxiProxyClient.createProxy("redis", "127.0.1.1:63790", "localhost:6379"); // todo move to config
+        return toxiProxyClient.createProxy("redis", TOXIPROXY_IP + ":63790", "localhost:6379");
     }
 
     private void enqueue(int num) {

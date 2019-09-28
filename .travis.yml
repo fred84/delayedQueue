@@ -5,6 +5,9 @@ dist: bionic
 jdk:
   - openjdk11
 
+env:
+  - TOXIPROXY_IP=127.0.1.1
+
 services:
   - redis-server
 
