@@ -90,7 +90,7 @@ public class RedisDelayedEventService implements DelayedEventService, Closeable 
         }
     }
 
-    public static final String DELAYED_QUEUE = "delayed_events"; // todo make package visible
+    static final String DELAYED_QUEUE = "delayed_events";
     private static final String LOCK_KEY = "delayed_events_lock";
     private static final String EVENTS_HSET = "events";
     private static final String DELIMITER = "###";
@@ -165,7 +165,7 @@ public class RedisDelayedEventService implements DelayedEventService, Closeable 
             var queue = toQueueName(eventType);
 
             Flux
-                    .generate(sink -> sink.next(0)) // todo this could be done in more elegant way
+                    .generate(sink -> sink.next(0))
                     .flatMap(
                             r -> pollingConnection
                                     .reactive()
