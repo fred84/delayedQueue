@@ -5,14 +5,16 @@ dist: bionic
 jdk:
   - openjdk11
 
+addons:
+  apt:
+    packages:
+      - toxiproxy
+
 env:
   - TOXIPROXY_IP=127.0.1.1
 
 services:
   - redis-server
-
-before_install:
-  - sudo apt-get install toxiproxy
 
 before_cache:
   - rm -f  $HOME/.gradle/caches/modules-2/modules-2.lock
