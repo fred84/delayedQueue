@@ -217,8 +217,9 @@ public class RedisDelayedEventService implements DelayedEventService, Closeable 
 
     Mono<TransactionResult> enqueueWithDelayInner(Event event, Duration delay) {
         return executeInTransaction(() -> {
+            var str = serialize(EventEnvelope.create(event, emptyMap()));
             String key = getKey(event);
-            reactiveCommands.hset(EVENTS_HSET, key, serialize(EventEnvelope.create(event, emptyMap()))).subscribeOn(single).subscribe();
+            reactiveCommands.hset(EVENTS_HSET, key, str).subscribeOn(single).subscribe();
             reactiveCommands.zadd(DELAYED_QUEUE, nx(), System.currentTimeMillis() + delay.toMillis(), key).subscribeOn(single).subscribe();
         });
     }
@@ -314,7 +315,7 @@ public class RedisDelayedEventService implements DelayedEventService, Closeable 
         return 60 * 24; // next 50 attempts once an hour
     }
 
-    private String serialize(Object envelope) {
+    private String serialize(EventEnvelope<? extends Event> envelope) {
         try {
             return mapper.writeValueAsString(envelope);
         } catch (JsonProcessingException e) {

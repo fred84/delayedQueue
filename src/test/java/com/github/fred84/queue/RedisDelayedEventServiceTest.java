@@ -10,6 +10,7 @@ import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.greaterThan;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import eu.rekawek.toxiproxy.Proxy;
@@ -20,9 +21,11 @@ import io.lettuce.core.RedisCommandTimeoutException;
 import io.lettuce.core.RedisConnectionException;
 import io.lettuce.core.TimeoutOptions;
 import io.lettuce.core.api.sync.RedisCommands;
+import java.beans.ConstructorProperties;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.time.Duration;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Random;
 import java.util.concurrent.ExecutorService;
@@ -31,7 +34,6 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.stream.IntStream;
-import lombok.Value;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -39,19 +41,103 @@ import reactor.core.publisher.Flux;
 
 class RedisDelayedEventServiceTest {
 
-    @Value
     private static class DummyEvent implements Event {
-        String id;
+
+        @JsonProperty
+        private final String id;
+
+        @ConstructorProperties({"id"})
+        private DummyEvent(String id) {
+            this.id = id;
+        }
+
+        @Override
+        public String getId() {
+            return id;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) {
+                return true;
+            }
+            if (!(o instanceof DummyEvent)) {
+                return false;
+            }
+            var that = (DummyEvent) o;
+            return Objects.equals(id, that.id);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(id);
+        }
     }
 
-    @Value
     private static class DummyEvent2 implements Event {
-        String id;
+
+        @JsonProperty
+        private final String id;
+
+        @ConstructorProperties({"id"})
+        private DummyEvent2(String id) {
+            this.id = id;
+        }
+
+        @Override
+        public String getId() {
+            return id;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) {
+                return true;
+            }
+            if (!(o instanceof DummyEvent2)) {
+                return false;
+            }
+            var that = (DummyEvent2) o;
+            return Objects.equals(id, that.id);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(id);
+        }
     }
 
-    @Value
     private static class DummyEvent3 implements Event {
-        String id;
+        
+        @JsonProperty
+        private final String id;
+
+        @ConstructorProperties({"id"})
+        private DummyEvent3(String id) {
+            this.id = id;
+        }
+
+        @Override
+        public String getId() {
+            return id;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) {
+                return true;
+            }
+            if (!(o instanceof DummyEvent3)) {
+                return false;
+            }
+            var that = (DummyEvent3) o;
+            return Objects.equals(id, that.id);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(id);
+        }
     }
 
     private static final String TOXIPROXY_IP = Optional.ofNullable(System.getenv("TOXIPROXY_IP")).orElse("127.0.0.1");
