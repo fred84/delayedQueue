@@ -4,6 +4,7 @@ import static com.github.fred84.queue.RedisDelayedEventService.DELAYED_QUEUE;
 import static com.github.fred84.queue.RedisDelayedEventService.delayedEventService;
 import static com.github.fred84.queue.RedisDelayedEventService.toQueueName;
 import static java.util.Collections.emptyMap;
+import static java.util.UUID.randomUUID;
 import static java.util.stream.Collectors.toList;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.equalTo;
@@ -13,6 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.fred84.queue.logging.MDCLogContextHelper;
 import eu.rekawek.toxiproxy.Proxy;
 import eu.rekawek.toxiproxy.ToxiproxyClient;
 import io.lettuce.core.ClientOptions;
@@ -37,6 +39,7 @@ import java.util.stream.IntStream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 import reactor.core.publisher.Flux;
 
 class RedisDelayedEventServiceTest {
@@ -167,6 +170,7 @@ class RedisDelayedEventServiceTest {
                 .threadPoolForHandlers(executor)
                 .enableScheduling(false)
                 .pollingTimeout(Duration.ofSeconds(1))
+                .logContext(new MDCLogContextHelper())
                 .build();
 
         connection = redisClient.connect().sync();
@@ -237,6 +241,26 @@ class RedisDelayedEventServiceTest {
         Thread.sleep(500);
 
         assertThat(connection.zcard(DELAYED_QUEUE), greaterThan(5L));
+    }
+
+    @Test
+    void verifyLogContext() throws InterruptedException {
+        var value = randomUUID().toString();
+
+        eventService.addBlockingHandler(
+                DummyEvent.class,
+                e -> value.equals(MDC.get("key")),
+                1
+        );
+
+        MDC.put("key", value);
+        eventService.enqueueWithDelayInner(new DummyEvent("1"), Duration.ZERO).block();
+
+        eventService.dispatchDelayedMessages();
+
+        Thread.sleep(100);
+
+        assertThat(connection.zcard(DELAYED_QUEUE), equalTo(0L));
     }
 
     @Test
