@@ -2,10 +2,11 @@ package com.github.fred84.queue;
 
 import static io.lettuce.core.SetArgs.Builder.ex;
 import static io.lettuce.core.ZAddArgs.Builder.nx;
-import static java.util.Collections.emptyMap;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.fred84.queue.logging.LogContext;
+import com.github.fred84.queue.logging.NoopLogContext;
 import io.lettuce.core.KeyValue;
 import io.lettuce.core.Range;
 import io.lettuce.core.RedisClient;
@@ -46,6 +47,7 @@ public class RedisDelayedEventService implements DelayedEventService, Closeable 
         private Duration schedulingInterval = Duration.ofMillis(500);
         private ExecutorService threadPoolForHandlers = Executors.newFixedThreadPool(5);
         private int retryAttempts = 70;
+        private LogContext logContext = new NoopLogContext();
 
         private Builder() {
         }
@@ -85,6 +87,11 @@ public class RedisDelayedEventService implements DelayedEventService, Closeable 
             return this;
         }
 
+        public Builder logContext(LogContext val) {
+            logContext = val;
+            return this;
+        }
+
         public RedisDelayedEventService build() {
             return new RedisDelayedEventService(this);
         }
@@ -109,10 +116,12 @@ public class RedisDelayedEventService implements DelayedEventService, Closeable 
     private final RedisReactiveCommands<String, String> reactiveCommands;
     private final Scheduler single = Schedulers.newSingle("redis-single");
     private final ScheduledThreadPoolExecutor dispatcherExecutor = new ScheduledThreadPoolExecutor(1);
+    private final LogContext logContext;
 
     private RedisDelayedEventService(Builder builder) {
         mapper = checkNotNull("object mapper", builder.mapper);
         client = checkNotNull("redis client", builder.client);
+        logContext = checkNotNull("log context", builder.logContext);
         pollingTimeout = checkNotShorter("polling interval", builder.pollingTimeout, Duration.ofMillis(50));
         lockTimeout = Duration.ofSeconds(2);
         retryAttempts = builder.retryAttempts;
@@ -156,6 +165,7 @@ public class RedisDelayedEventService implements DelayedEventService, Closeable 
         subscriptions.computeIfAbsent(eventType, re -> {
             StatefulRedisConnection<String, String> pollingConnection = client.connect();
             var subscription = new InnerSubscriber<>(
+                    logContext,
                     handler,
                     parallelism,
                     pollingConnection,
@@ -216,8 +226,10 @@ public class RedisDelayedEventService implements DelayedEventService, Closeable 
     }
 
     Mono<TransactionResult> enqueueWithDelayInner(Event event, Duration delay) {
+        var context = logContext.get();
+
         return executeInTransaction(() -> {
-            var str = serialize(EventEnvelope.create(event, emptyMap()));
+            var str = serialize(EventEnvelope.create(event, context));
             String key = getKey(event);
             reactiveCommands.hset(EVENTS_HSET, key, str).subscribeOn(single).subscribe();
             reactiveCommands.zadd(DELAYED_QUEUE, nx(), System.currentTimeMillis() + delay.toMillis(), key).subscribeOn(single).subscribe();

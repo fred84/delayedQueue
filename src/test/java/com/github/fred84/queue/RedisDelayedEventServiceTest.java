@@ -13,6 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.fred84.queue.logging.MDCLogContext;
 import eu.rekawek.toxiproxy.Proxy;
 import eu.rekawek.toxiproxy.ToxiproxyClient;
 import io.lettuce.core.ClientOptions;
@@ -25,9 +26,11 @@ import java.beans.ConstructorProperties;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.time.Duration;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Random;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
@@ -37,6 +40,7 @@ import java.util.stream.IntStream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 import reactor.core.publisher.Flux;
 
 class RedisDelayedEventServiceTest {
@@ -167,6 +171,7 @@ class RedisDelayedEventServiceTest {
                 .threadPoolForHandlers(executor)
                 .enableScheduling(false)
                 .pollingTimeout(Duration.ofSeconds(1))
+                .logContext(new MDCLogContext())
                 .build();
 
         connection = redisClient.connect().sync();
@@ -237,6 +242,32 @@ class RedisDelayedEventServiceTest {
         Thread.sleep(500);
 
         assertThat(connection.zcard(DELAYED_QUEUE), greaterThan(5L));
+    }
+
+    @Test
+    void verifyLogContext() throws InterruptedException {
+        var collector = new ConcurrentHashMap<String, String>();
+
+        eventService.addBlockingHandler(
+                DummyEvent.class,
+                e -> {
+                    collector.put(e.getId(), MDC.get("key"));
+                    return true;
+                },
+                1
+        );
+
+        enqueue(3, id -> {
+            var str = Integer.toString(id);
+            MDC.put("key", str);
+            return new DummyEvent(str);
+        });
+
+        eventService.dispatchDelayedMessages();
+
+        Thread.sleep(100);
+
+        assertThat(collector, equalTo(Map.of("0", "0", "1", "1", "2", "2")));
     }
 
     @Test
