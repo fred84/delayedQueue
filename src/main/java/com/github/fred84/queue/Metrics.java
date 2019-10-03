@@ -1,4 +1,6 @@
 package com.github.fred84.queue;
 
-public class Metrics {
+public interface Metrics {
+
+    <T extends Event> void incrementCounterFor(Class<T> type, String direction);
 }

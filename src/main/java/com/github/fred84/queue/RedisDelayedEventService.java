@@ -46,6 +46,7 @@ public class RedisDelayedEventService implements DelayedEventService, Closeable 
         private Duration schedulingInterval = Duration.ofMillis(500);
         private ExecutorService threadPoolForHandlers = Executors.newFixedThreadPool(5);
         private int retryAttempts = 70;
+        private Metrics metrics = new NoopMetrics();
 
         private Builder() {
         }
@@ -85,6 +86,11 @@ public class RedisDelayedEventService implements DelayedEventService, Closeable 
             return this;
         }
 
+        public Builder metrics(Metrics val) {
+            metrics = val;
+            return this;
+        }
+
         public RedisDelayedEventService build() {
             return new RedisDelayedEventService(this);
         }
@@ -109,6 +115,7 @@ public class RedisDelayedEventService implements DelayedEventService, Closeable 
     private final RedisReactiveCommands<String, String> reactiveCommands;
     private final Scheduler single = Schedulers.newSingle("redis-single");
     private final ScheduledThreadPoolExecutor dispatcherExecutor = new ScheduledThreadPoolExecutor(1);
+    private final Metrics metrics;
 
     private RedisDelayedEventService(Builder builder) {
         mapper = checkNotNull("object mapper", builder.mapper);
@@ -117,6 +124,7 @@ public class RedisDelayedEventService implements DelayedEventService, Closeable 
         lockTimeout = Duration.ofSeconds(2);
         retryAttempts = builder.retryAttempts;
         handlerScheduler = Schedulers.fromExecutorService(checkNotNull("handlers thread pool", builder.threadPoolForHandlers));
+        metrics = builder.metrics;
 
         this.dispatchCommands = client.connect().sync();
         this.reactiveCommands = client.connect().reactive();
@@ -170,6 +178,7 @@ public class RedisDelayedEventService implements DelayedEventService, Closeable 
                             r -> pollingConnection
                                     .reactive()
                                     .brpop(pollingTimeout.toMillis() * 1000, queue)
+                                    .doOnNext(v -> metrics.incrementCounterFor(eventType, "handle"))
                                     .doOnError(e -> {
                                         if (e instanceof RedisCommandTimeoutException) {
                                             LOG.debug("polling command timed out");
@@ -221,7 +230,7 @@ public class RedisDelayedEventService implements DelayedEventService, Closeable 
             String key = getKey(event);
             reactiveCommands.hset(EVENTS_HSET, key, str).subscribeOn(single).subscribe();
             reactiveCommands.zadd(DELAYED_QUEUE, nx(), System.currentTimeMillis() + delay.toMillis(), key).subscribeOn(single).subscribe();
-        });
+        }).doOnNext(v -> metrics.incrementCounterFor(event.getClass(), "enqueue"));
     }
 
     void dispatchDelayedMessages() {
