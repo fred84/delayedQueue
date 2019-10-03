@@ -5,8 +5,8 @@ import static io.lettuce.core.ZAddArgs.Builder.nx;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.github.fred84.queue.logging.LogContextHelper;
-import com.github.fred84.queue.logging.NoopLogContextHelper;
+import com.github.fred84.queue.logging.LogContext;
+import com.github.fred84.queue.logging.NoopLogContext;
 import io.lettuce.core.KeyValue;
 import io.lettuce.core.Range;
 import io.lettuce.core.RedisClient;
@@ -47,7 +47,7 @@ public class RedisDelayedEventService implements DelayedEventService, Closeable 
         private Duration schedulingInterval = Duration.ofMillis(500);
         private ExecutorService threadPoolForHandlers = Executors.newFixedThreadPool(5);
         private int retryAttempts = 70;
-        private LogContextHelper logContextHelper = new NoopLogContextHelper();
+        private LogContext logContext = new NoopLogContext();
 
         private Builder() {
         }
@@ -87,8 +87,8 @@ public class RedisDelayedEventService implements DelayedEventService, Closeable 
             return this;
         }
 
-        public Builder logContext(LogContextHelper val) {
-            logContextHelper = val;
+        public Builder logContext(LogContext val) {
+            logContext = val;
             return this;
         }
 
@@ -116,12 +116,12 @@ public class RedisDelayedEventService implements DelayedEventService, Closeable 
     private final RedisReactiveCommands<String, String> reactiveCommands;
     private final Scheduler single = Schedulers.newSingle("redis-single");
     private final ScheduledThreadPoolExecutor dispatcherExecutor = new ScheduledThreadPoolExecutor(1);
-    private final LogContextHelper logContextHelper;
+    private final LogContext logContext;
 
     private RedisDelayedEventService(Builder builder) {
         mapper = checkNotNull("object mapper", builder.mapper);
         client = checkNotNull("redis client", builder.client);
-        logContextHelper = checkNotNull("log context", builder.logContextHelper);
+        logContext = checkNotNull("log context", builder.logContext);
         pollingTimeout = checkNotShorter("polling interval", builder.pollingTimeout, Duration.ofMillis(50));
         lockTimeout = Duration.ofSeconds(2);
         retryAttempts = builder.retryAttempts;
@@ -165,7 +165,7 @@ public class RedisDelayedEventService implements DelayedEventService, Closeable 
         subscriptions.computeIfAbsent(eventType, re -> {
             StatefulRedisConnection<String, String> pollingConnection = client.connect();
             var subscription = new InnerSubscriber<>(
-                    logContextHelper,
+                    logContext,
                     handler,
                     parallelism,
                     pollingConnection,
@@ -226,7 +226,7 @@ public class RedisDelayedEventService implements DelayedEventService, Closeable 
     }
 
     Mono<TransactionResult> enqueueWithDelayInner(Event event, Duration delay) {
-        var context = logContextHelper.getLogContext();
+        var context = logContext.get();
 
         return executeInTransaction(() -> {
             var str = serialize(EventEnvelope.create(event, context));

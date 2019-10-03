@@ -4,7 +4,6 @@ import static com.github.fred84.queue.RedisDelayedEventService.DELAYED_QUEUE;
 import static com.github.fred84.queue.RedisDelayedEventService.delayedEventService;
 import static com.github.fred84.queue.RedisDelayedEventService.toQueueName;
 import static java.util.Collections.emptyMap;
-import static java.util.UUID.randomUUID;
 import static java.util.stream.Collectors.toList;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.equalTo;
@@ -14,7 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.github.fred84.queue.logging.MDCLogContextHelper;
+import com.github.fred84.queue.logging.MDCLogContext;
 import eu.rekawek.toxiproxy.Proxy;
 import eu.rekawek.toxiproxy.ToxiproxyClient;
 import io.lettuce.core.ClientOptions;
@@ -27,9 +26,11 @@ import java.beans.ConstructorProperties;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.time.Duration;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Random;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
@@ -170,7 +171,7 @@ class RedisDelayedEventServiceTest {
                 .threadPoolForHandlers(executor)
                 .enableScheduling(false)
                 .pollingTimeout(Duration.ofSeconds(1))
-                .logContext(new MDCLogContextHelper())
+                .logContext(new MDCLogContext())
                 .build();
 
         connection = redisClient.connect().sync();
@@ -245,22 +246,28 @@ class RedisDelayedEventServiceTest {
 
     @Test
     void verifyLogContext() throws InterruptedException {
-        var value = randomUUID().toString();
+        var collector = new ConcurrentHashMap<String, String>();
 
         eventService.addBlockingHandler(
                 DummyEvent.class,
-                e -> value.equals(MDC.get("key")),
+                e -> {
+                    collector.put(e.getId(), MDC.get("key"));
+                    return true;
+                },
                 1
         );
 
-        MDC.put("key", value);
-        eventService.enqueueWithDelayInner(new DummyEvent("1"), Duration.ZERO).block();
+        enqueue(3, id -> {
+            var str = Integer.toString(id);
+            MDC.put("key", str);
+            return new DummyEvent(str);
+        });
 
         eventService.dispatchDelayedMessages();
 
         Thread.sleep(100);
 
-        assertThat(connection.zcard(DELAYED_QUEUE), equalTo(0L));
+        assertThat(collector, equalTo(Map.of("0", "0", "1", "1", "2", "2")));
     }
 
     @Test

@@ -1,6 +1,6 @@
 package com.github.fred84.queue;
 
-import com.github.fred84.queue.logging.LogContextHelper;
+import com.github.fred84.queue.logging.LogContext;
 import io.lettuce.core.TransactionResult;
 import io.lettuce.core.api.StatefulRedisConnection;
 import java.util.function.Function;
@@ -15,7 +15,7 @@ class InnerSubscriber<T extends Event> extends BaseSubscriber<EventEnvelope<T>> 
 
     private static Logger LOG = LoggerFactory.getLogger(InnerSubscriber.class);
 
-    private final LogContextHelper logContextHelper;
+    private final LogContext logContext;
     private final Function<T, Mono<Boolean>> handler;
     private final int parallelism;
     private final StatefulRedisConnection<String, String> pollingConnection;
@@ -23,14 +23,14 @@ class InnerSubscriber<T extends Event> extends BaseSubscriber<EventEnvelope<T>> 
     private final Function<Event, Mono<TransactionResult>> deleteCommand;
 
     InnerSubscriber(
-            LogContextHelper logContextHelper,
+            LogContext logContext,
             Function<T, Mono<Boolean>> handler,
             int parallelism,
             StatefulRedisConnection<String, String> pollingConnection,
             Scheduler handlerScheduler,
             Function<Event, Mono<TransactionResult>> deleteCommand
     ) {
-        this.logContextHelper = logContextHelper;
+        this.logContext = logContext;
         this.handler = handler;
         this.parallelism = parallelism;
         this.pollingConnection = pollingConnection;
@@ -55,7 +55,7 @@ class InnerSubscriber<T extends Event> extends BaseSubscriber<EventEnvelope<T>> 
         }
 
         promise
-                .doFirst(() -> logContextHelper.setLogContext(envelope.getLogContext()))
+                .doFirst(() -> logContext.set(envelope.getLogContext()))
                 .defaultIfEmpty(false)
                 .doOnError(e -> LOG.warn("error occurred during handling event [{}]", envelope, e))
                 .onErrorReturn(false)

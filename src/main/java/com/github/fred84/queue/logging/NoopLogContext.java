@@ -4,16 +4,16 @@ import static java.util.Collections.emptyMap;
 
 import java.util.Map;
 
-public class NoopLogContextHelper implements LogContextHelper {
+public class NoopLogContext implements LogContext {
 
 
     @Override
-    public Map<String, String> getLogContext() {
+    public Map<String, String> get() {
         return emptyMap();
     }
 
     @Override
-    public void setLogContext(Map<String, String> context) {
+    public void set(Map<String, String> context) {
         // do nothing
     }
 }
