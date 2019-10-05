@@ -2,15 +2,15 @@
 
 [![Build Status](https://travis-ci.com/fred84/delayedQueue.svg?branch=master)](https://travis-ci.com/fred84/delayedQueue)
 
-`DelayedQueue` is a library to enqueue and later handle immutable events. It is written in `java` on top of `reactor` and `lettuce`.
-`Redis` is the only available storage engine. Queue doesn't provide durability guarantees but in pair with clusterized `redis` installation 
+`DelayedQueue` is a library to enqueue and later handle immutable events. It is written in `java` on top of [reactor](https://github.com/reactor) and [lettuce](https://github.com/lettuce-io/lettuce-core).
+[Redis](https://redis.io) is the only available storage engine. Queue doesn't provide durability guarantees but in pair with clusterized `redis` installation 
 it is suitable for many use cases.
 
 Key features are:
 - event handling is retriable at increased intervals between attempts
 - logging context could be restored right before event handling
 - support for `lifecycle` annotations
-- sending metrics using `Micrometer`
+- sending metrics using [Micrometer](https://github.com/micrometer-metrics/micrometer)
 
 `DelayedQueue` are highly opinionated (hence customizable), with very little configuration needed to start using it. 
 If you want more control consider using Netflix's [dyno-queue](https://github.com/Netflix/dyno-queues).
@@ -20,39 +20,39 @@ If you want more control consider using Netflix's [dyno-queue](https://github.co
 Minimal supported java version is 11.
 
 ```groovy
-        repositories {
-			...
-			maven { url 'https://jitpack.io' }
-		}
+repositories {
+    maven { url 'https://jitpack.io' }
+}
 ```
 
 ```groovy
-    dependencies {
-	        implementation 'com.github.fred84:delayedQueue:0.2'
-	}
+dependencies {
+    implementation 'com.github.fred84:delayedQueue:0.2'
+}
 ```
-
-gradle + link to jitpack
 
 ## Examples
 
 ### Minimal configuration
 
 ```java
-var eventService = DelayedEventService.delayedEventService().client(redisClient).build();
+import static com.github.fred84.queue.DelayedEventService.delayedEventService;
+
+var eventService = delayedEventService().client(redisClient).build();
 ```
 
 ### Full configuration
 
 ```java
-var eventService = DelayedEventService.delayedEventService()
-                .client(redisClient)
-                .mapper(objectMapper)
-                .threadPoolForHandlers(executor)
-                .enableScheduling(false)
-                .pollingTimeout(Duration.ofSeconds(1))
-                .logContext(new MDCLogContext())
-                .build();
+import static com.github.fred84.queue.DelayedEventService.delayedEventService;
+
+var eventService = delayedEventService()
+        .client(redisClient)
+        .mapper(objectMapper)
+        .threadPoolForHandlers(executor)
+        .logContext(new MDCLogContext())
+        .metrics(new MicrometerMetrics(registry))
+        .build();
 ```
 
 ### Add event handler
@@ -74,4 +74,4 @@ eventService.enqueueWithDelay(new DummyEvent("1"), Duration.ofHours(1));
 
 ## Contribution
 
-Contributions are welcome. Just create pull request.
+Contributions are welcome. Just create a pull request.
