@@ -1,8 +1,8 @@
 package com.github.fred84.queue;
 
-import static com.github.fred84.queue.RedisDelayedEventService.DELAYED_QUEUE;
-import static com.github.fred84.queue.RedisDelayedEventService.delayedEventService;
-import static com.github.fred84.queue.RedisDelayedEventService.toQueueName;
+import static com.github.fred84.queue.DelayedEventService.DELAYED_QUEUE;
+import static com.github.fred84.queue.DelayedEventService.delayedEventService;
+import static com.github.fred84.queue.DelayedEventService.toQueueName;
 import static java.util.Collections.emptyMap;
 import static java.util.stream.Collectors.toList;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -42,8 +42,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.MDC;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
-class RedisDelayedEventServiceTest {
+class DelayedEventServiceTest {
 
     private static class DummyEvent implements Event {
 
@@ -148,7 +149,7 @@ class RedisDelayedEventServiceTest {
 
     private RedisClient redisClient;
     private RedisCommands<String, String> connection;
-    private RedisDelayedEventService eventService;
+    private DelayedEventService eventService;
     private final ExecutorService executor = Executors.newFixedThreadPool(10);
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final ToxiproxyClient toxiProxyClient = new ToxiproxyClient(TOXIPROXY_IP, 8474);
@@ -406,11 +407,11 @@ class RedisDelayedEventServiceTest {
 
         eventService.enqueueWithDelayInner(event, Duration.ZERO).block();
 
-        double score = connection.zscore(DELAYED_QUEUE, RedisDelayedEventService.getKey(event));
+        double score = connection.zscore(DELAYED_QUEUE, DelayedEventService.getKey(event));
 
         eventService.dispatchDelayedMessages();
 
-        double postDispatchScore = connection.zscore(DELAYED_QUEUE, RedisDelayedEventService.getKey(event));
+        double postDispatchScore = connection.zscore(DELAYED_QUEUE, DelayedEventService.getKey(event));
 
         assertThat(postDispatchScore - score, greaterThan(10000.0));
 
@@ -427,6 +428,21 @@ class RedisDelayedEventServiceTest {
         eventService.enqueueWithDelayInner(event, Duration.ZERO).block();
 
         assertThat(connection.zcard(DELAYED_QUEUE), equalTo(1L));
+    }
+
+    @Test
+    void enqueueNulls() {
+        assertThrows(NullPointerException.class, () -> eventService.enqueueWithDelay(new DummyEvent("1"), null));
+        assertThrows(NullPointerException.class, () -> eventService.enqueueWithDelay(null, Duration.ZERO));
+        assertThrows(NullPointerException.class, () -> eventService.enqueueWithDelay(new DummyEvent(null), Duration.ZERO));
+    }
+
+    @Test
+    void validateAddHanlder() {
+        assertThrows(NullPointerException.class, () -> eventService.addHandler(null, e -> Mono.just(true), 1));
+        assertThrows(NullPointerException.class, () -> eventService.addHandler(DummyEvent.class, null, 1));
+        assertThrows(IllegalArgumentException.class, () -> eventService.addHandler(DummyEvent.class, e -> Mono.just(true), 0));
+        assertThrows(IllegalArgumentException.class, () -> eventService.addHandler(DummyEvent.class, e -> Mono.just(true), 101));
     }
 
     private EventEnvelope<DummyEvent> deserialize(String raw) {
