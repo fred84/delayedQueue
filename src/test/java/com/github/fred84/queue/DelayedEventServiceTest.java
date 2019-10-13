@@ -272,7 +272,7 @@ class DelayedEventServiceTest {
         Map<String, String> expected = new HashMap<>();
         expected.put("0", "0");
         expected.put("1", "1");
-        expected.put("1", "1");
+        expected.put("2", "2");
 
         assertThat(collector, equalTo(expected));
     }
