@@ -4,6 +4,7 @@ import static com.github.fred84.queue.DelayedEventService.DELAYED_QUEUE;
 import static com.github.fred84.queue.DelayedEventService.delayedEventService;
 import static com.github.fred84.queue.DelayedEventService.toQueueName;
 import static java.util.Collections.emptyMap;
+import static java.util.Optional.ofNullable;
 import static java.util.stream.Collectors.toList;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.equalTo;
@@ -29,7 +30,6 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -146,7 +146,7 @@ class DelayedEventServiceTest {
         }
     }
 
-    private static final String TOXIPROXY_IP = Optional.ofNullable(System.getenv("TOXIPROXY_IP")).orElse("127.0.0.1");
+    private static final String TOXIPROXY_IP = ofNullable(System.getenv("TOXIPROXY_IP")).orElse("127.0.0.1");
 
     private RedisClient redisClient;
     private RedisCommands<String, String> connection;
