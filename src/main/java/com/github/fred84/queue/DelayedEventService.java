@@ -218,8 +218,7 @@ public class DelayedEventService implements Closeable {
             Flux
                     .generate(sink -> sink.next(0))
                     .flatMap(
-                            // todo we can start on decoding filter in W1
-                            r -> pollingConnection // todo replace polling connection with huge array mono provider and test on the following pipeline
+                            r -> pollingConnection
                                     .reactive()
                                     .brpop(pollingTimeout.toMillis() * 1000, queue)
                                     .doOnNext(v -> metrics.incrementCounterFor(eventType, "handle"))
