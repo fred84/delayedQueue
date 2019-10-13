@@ -26,6 +26,7 @@ import java.beans.ConstructorProperties;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.time.Duration;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -69,7 +70,7 @@ class DelayedEventServiceTest {
             if (!(o instanceof DummyEvent)) {
                 return false;
             }
-            var that = (DummyEvent) o;
+            DummyEvent that = (DummyEvent) o;
             return Objects.equals(id, that.id);
         }
 
@@ -102,7 +103,7 @@ class DelayedEventServiceTest {
             if (!(o instanceof DummyEvent2)) {
                 return false;
             }
-            var that = (DummyEvent2) o;
+            DummyEvent2 that = (DummyEvent2) o;
             return Objects.equals(id, that.id);
         }
 
@@ -135,7 +136,7 @@ class DelayedEventServiceTest {
             if (!(o instanceof DummyEvent3)) {
                 return false;
             }
-            var that = (DummyEvent3) o;
+            DummyEvent3 that = (DummyEvent3) o;
             return Objects.equals(id, that.id);
         }
 
@@ -197,7 +198,7 @@ class DelayedEventServiceTest {
     @Test
     void differentEventsHandledInParallel() throws InterruptedException {
         enqueue(90, id -> {
-            var str = Integer.toString(id);
+            String str = Integer.toString(id);
             switch (id % 3) {
                 case 2:
                     return new DummyEvent3(str);
@@ -247,7 +248,7 @@ class DelayedEventServiceTest {
 
     @Test
     void verifyLogContext() throws InterruptedException {
-        var collector = new ConcurrentHashMap<String, String>();
+        Map<String, String> collector = new ConcurrentHashMap<>();
 
         eventService.addBlockingHandler(
                 DummyEvent.class,
@@ -259,7 +260,7 @@ class DelayedEventServiceTest {
         );
 
         enqueue(3, id -> {
-            var str = Integer.toString(id);
+            String str = Integer.toString(id);
             MDC.put("key", str);
             return new DummyEvent(str);
         });
@@ -268,7 +269,12 @@ class DelayedEventServiceTest {
 
         Thread.sleep(100);
 
-        assertThat(collector, equalTo(Map.of("0", "0", "1", "1", "2", "2")));
+        Map<String, String> expected = new HashMap<>();
+        expected.put("0", "0");
+        expected.put("1", "1");
+        expected.put("1", "1");
+
+        assertThat(collector, equalTo(expected));
     }
 
     @Test

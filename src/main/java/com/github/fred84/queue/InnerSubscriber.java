@@ -47,7 +47,7 @@ class InnerSubscriber<T extends Event> extends BaseSubscriber<EventEnvelope<T>> 
     protected void hookOnNext(EventEnvelope<T> envelope) {
         LOG.debug("event [{}] received from queue", envelope);
 
-        var promise = handler.apply(envelope.getPayload());
+        Mono<Boolean> promise = handler.apply(envelope.getPayload());
 
         if (promise == null) {
             requestInner(1);

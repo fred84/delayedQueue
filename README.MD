@@ -17,7 +17,7 @@ If you want more control consider using Netflix's [dyno-queue](https://github.co
 
 ## Installation
 
-Minimal supported java version is 11.
+Minimal supported java version is 1.8.
 
 ```groovy
 repositories {
@@ -70,6 +70,12 @@ eventService.addBlockingHandler(DummyEvent.class, e -> true, 1);
 
 ```java
 eventService.enqueueWithDelay(new DummyEvent("1"), Duration.ofHours(1));
+```
+
+### Close service
+
+```java
+eventService.close();
 ```
 
 ## Contribution
