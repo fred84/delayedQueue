@@ -10,6 +10,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.fred84.queue.logging.LogContext;
 import com.github.fred84.queue.logging.NoopLogContext;
 import io.lettuce.core.KeyValue;
+import io.lettuce.core.Limit;
 import io.lettuce.core.Range;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisCommandTimeoutException;
@@ -49,10 +50,12 @@ public class DelayedEventService implements Closeable {
         private Duration pollingTimeout = Duration.ofSeconds(1);
         private boolean enableScheduling = true;
         private Duration schedulingInterval = Duration.ofMillis(500);
+        private int schedulingBatchSize = 100;
         private ExecutorService threadPoolForHandlers = Executors.newFixedThreadPool(5);
         private int retryAttempts = 70;
         private Metrics metrics = new NoopMetrics();
         private LogContext logContext = new NoopLogContext();
+        private String dataSetPrefix = "de_";
 
         private Builder() {
         }
@@ -112,18 +115,26 @@ public class DelayedEventService implements Closeable {
         }
 
         @NotNull
+        public Builder dataSetPrefix(@NotNull String val) {
+            dataSetPrefix = val;
+            return this;
+        }
+
+        @NotNull
+        public Builder schedulingBatchSize(@NotNull int val) {
+            schedulingBatchSize = val;
+            return this;
+        }
+
+        @NotNull
         public DelayedEventService build() {
             return new DelayedEventService(this);
         }
     }
 
-    static final String DELAYED_QUEUE = "delayed_events";
-    private static final String LOCK_KEY = "delayed_events_lock";
-    private static final String EVENTS_HSET = "events";
     private static final String DELIMITER = "###";
     private static Logger LOG = LoggerFactory.getLogger(DelayedEventService.class);
 
-    private Map<Class, JavaType> parametrizedEnvelopeTypes = new ConcurrentHashMap<>();
     private final Map<Class<? extends Event>, Disposable> subscriptions = new ConcurrentHashMap<>();
 
     private final ObjectMapper mapper;
@@ -139,6 +150,12 @@ public class DelayedEventService implements Closeable {
     private final ScheduledThreadPoolExecutor dispatcherExecutor = new ScheduledThreadPoolExecutor(1);
     private final Metrics metrics;
     private final LogContext logContext;
+    private final String dataSetPrefix;
+    private final Limit schedulingBatchSize;
+
+    private final String zsetName;
+    private final String lockKey;
+    private final String metadataHset;
 
     private DelayedEventService(Builder builder) {
         mapper = requireNonNull(builder.mapper, "object mapper");
@@ -146,11 +163,15 @@ public class DelayedEventService implements Closeable {
         logContext = requireNonNull(builder.logContext, "log context");
         pollingTimeout = checkNotShorter(builder.pollingTimeout, Duration.ofMillis(50), "polling interval");
         lockTimeout = Duration.ofSeconds(2);
-        retryAttempts = builder.retryAttempts;
+        retryAttempts = checkInRange(builder.retryAttempts, 1, 100, "retry attempts");
         handlerScheduler = Schedulers.fromExecutorService(requireNonNull(builder.threadPoolForHandlers, "handlers thread pool"));
         metrics = requireNonNull(builder.metrics, "metrics");
+        dataSetPrefix = requireNonNull(builder.dataSetPrefix, "data set prefix");
+        schedulingBatchSize = Limit.from(checkInRange(builder.schedulingBatchSize, 1, 1000, "scheduling batch size"));
 
-        addParametrizedEnvelopeType(Event.class);
+        zsetName = dataSetPrefix + "delayed_events";
+        lockKey = dataSetPrefix + "delayed_events_lock";
+        metadataHset = dataSetPrefix + "events";
 
         this.dispatchCommands = client.connect().sync();
         this.reactiveCommands = client.connect().reactive();
@@ -163,7 +184,6 @@ public class DelayedEventService implements Closeable {
                     TimeUnit.NANOSECONDS
             );
         }
-
     }
 
     @NotNull
@@ -200,8 +220,6 @@ public class DelayedEventService implements Closeable {
         requireNonNull(eventType, "event type");
         requireNonNull(handler, "handler");
         checkInRange(parallelism, 1, 100, "parallelism");
-
-        addParametrizedEnvelopeType(eventType);
 
         subscriptions.computeIfAbsent(eventType, re -> {
             StatefulRedisConnection<String, String> pollingConnection = client.connect();
@@ -275,8 +293,8 @@ public class DelayedEventService implements Closeable {
         return executeInTransaction(() -> {
             String key = getKey(event);
             String rawEnvelope = serialize(EventEnvelope.create(event, context));
-            reactiveCommands.hset(EVENTS_HSET, key, rawEnvelope).subscribeOn(single).subscribe();
-            reactiveCommands.zadd(DELAYED_QUEUE, nx(), System.currentTimeMillis() + delay.toMillis(), key).subscribeOn(single).subscribe();
+            reactiveCommands.hset(metadataHset, key, rawEnvelope).subscribeOn(single).subscribe();
+            reactiveCommands.zadd(zsetName, nx(), System.currentTimeMillis() + delay.toMillis(), key).subscribeOn(single).subscribe();
         }).doOnNext(v -> metrics.incrementCounterFor(event.getClass(), "enqueue"));
     }
 
@@ -291,10 +309,11 @@ public class DelayedEventService implements Closeable {
                 return;
             }
 
-            // todo prefix for all redis structures
-            // todo put limit here and to config
-            // m
-            List<String> tasksForExecution = dispatchCommands.zrangebyscore(DELAYED_QUEUE, Range.create(-1, System.currentTimeMillis()));
+            List<String> tasksForExecution = dispatchCommands.zrangebyscore(
+                    zsetName,
+                    Range.create(-1, System.currentTimeMillis()),
+                    schedulingBatchSize
+            );
 
             if (null == tasksForExecution) {
                 return;
@@ -314,8 +333,8 @@ public class DelayedEventService implements Closeable {
     private Mono<TransactionResult> removeFromDelayedQueue(Event event) {
         return executeInTransaction(() -> {
             String key = getKey(event);
-            reactiveCommands.hdel(EVENTS_HSET, key).subscribeOn(single).subscribe();
-            reactiveCommands.zrem(DELAYED_QUEUE, key).subscribeOn(single).subscribe();
+            reactiveCommands.hdel(metadataHset, key).subscribeOn(single).subscribe();
+            reactiveCommands.zrem(zsetName, key).subscribeOn(single).subscribe();
         });
     }
 
@@ -328,12 +347,12 @@ public class DelayedEventService implements Closeable {
     }
 
     private void handleDelayedTask(String key) {
-        String rawEnvelope = dispatchCommands.hget(EVENTS_HSET, key);
+        String rawEnvelope = dispatchCommands.hget(metadataHset, key);
 
         // We could have stale data because other instance already processed and deleted this key
         if (rawEnvelope == null) {
-            if (dispatchCommands.zrem(DELAYED_QUEUE, key) > 0) {
-                LOG.debug("key '" + key + "' not found in HSET");
+            if (dispatchCommands.zrem(zsetName, key) > 0) {
+                LOG.debug("key '" + key + "' not found in HSET"); // log debug strings could be avoided
             }
 
             return;
@@ -345,11 +364,11 @@ public class DelayedEventService implements Closeable {
         dispatchCommands.multi();
 
         if (nextEnvelope.getAttempt() < retryAttempts) {
-            dispatchCommands.zadd(DELAYED_QUEUE, nextAttemptTime(nextEnvelope.getAttempt()), key);
-            dispatchCommands.hset(EVENTS_HSET, key, serialize(nextEnvelope));
+            dispatchCommands.zadd(zsetName, nextAttemptTime(nextEnvelope.getAttempt()), key);
+            dispatchCommands.hset(metadataHset, key, serialize(nextEnvelope));
         } else {
-            dispatchCommands.zrem(DELAYED_QUEUE, key);
-            dispatchCommands.hdel(EVENTS_HSET, key);
+            dispatchCommands.zrem(zsetName, key);
+            dispatchCommands.hdel(metadataHset, key);
         }
         dispatchCommands.lpush(toQueueName(currentEnvelope.getType()), serialize(currentEnvelope));
 
@@ -382,32 +401,29 @@ public class DelayedEventService implements Closeable {
         }
     }
 
-    private void addParametrizedEnvelopeType(Class<? extends Event> eventType) {
-        parametrizedEnvelopeTypes.put(eventType, mapper.getTypeFactory().constructParametricType(EventEnvelope.class, eventType));
-    }
-
     private <T extends Event> EventEnvelope<T> deserialize(Class<T> eventType, String rawEnvelope) {
+        JavaType envelopeType = mapper.getTypeFactory().constructParametricType(EventEnvelope.class, eventType);
         try {
-            return mapper.readValue(rawEnvelope, parametrizedEnvelopeTypes.get(eventType));
+            return mapper.readValue(rawEnvelope, envelopeType);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
     }
 
     private String tryLock() {
-        return dispatchCommands.set(LOCK_KEY, "value", ex(lockTimeout.toMillis() * 1000).nx());
+        return dispatchCommands.set(lockKey, "value", ex(lockTimeout.toMillis() * 1000).nx());
     }
 
     private void unlock() {
         try {
-            dispatchCommands.del(LOCK_KEY);
+            dispatchCommands.del(lockKey);
         } catch (RedisException e) {
             dispatchCommands.reset();
         }
     }
 
-    static String toQueueName(Class<?> cls) {
-        return cls.getSimpleName().toLowerCase();
+    private String toQueueName(Class<? extends Event> cls) {
+        return dataSetPrefix + cls.getSimpleName().toLowerCase();
     }
 
     static String getKey(Event event) {

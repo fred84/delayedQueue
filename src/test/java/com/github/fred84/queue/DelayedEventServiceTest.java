@@ -1,8 +1,6 @@
 package com.github.fred84.queue;
 
-import static com.github.fred84.queue.DelayedEventService.DELAYED_QUEUE;
 import static com.github.fred84.queue.DelayedEventService.delayedEventService;
-import static com.github.fred84.queue.DelayedEventService.toQueueName;
 import static java.util.Collections.emptyMap;
 import static java.util.Optional.ofNullable;
 import static java.util.stream.Collectors.toList;
@@ -146,6 +144,7 @@ class DelayedEventServiceTest {
         }
     }
 
+    private static final String DELAYED_QUEUE = "delayed_events";
     private static final String TOXIPROXY_IP = ofNullable(System.getenv("TOXIPROXY_IP")).orElse("127.0.0.1");
 
     private RedisClient redisClient;
@@ -174,6 +173,8 @@ class DelayedEventServiceTest {
                 .enableScheduling(false)
                 .pollingTimeout(Duration.ofSeconds(1))
                 .logContext(new MDCLogContext())
+                .dataSetPrefix("")
+                .schedulingBatchSize(100)
                 .build();
 
         connection = redisClient.connect().sync();
@@ -427,6 +428,18 @@ class DelayedEventServiceTest {
     }
 
     @Test
+    void dispatchLimit() {
+        enqueue(110);
+
+        assertThat(connection.zcard(DELAYED_QUEUE), equalTo(110L));
+
+        eventService.dispatchDelayedMessages();
+
+        // srande with score > x
+        assertThat(connection.zcard(DELAYED_QUEUE), equalTo(10L));
+    }
+
+    @Test
     void duplicateItems() {
         DummyEvent event = new DummyEvent("1");
 
@@ -491,5 +504,9 @@ class DelayedEventServiceTest {
                 .merge(stream.mapToObj(id -> eventService.enqueueWithDelayInner(transformer.apply(id), Duration.ZERO)).collect(toList()))
                 .collectList()
                 .block();
+    }
+
+    private String toQueueName(Class<? extends Event> cls) {
+        return cls.getSimpleName().toLowerCase();
     }
 }
