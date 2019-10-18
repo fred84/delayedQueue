@@ -175,7 +175,7 @@ class DelayedEventServiceTest {
                 .pollingTimeout(Duration.ofSeconds(1))
                 .logContext(new MDCLogContext())
                 .dataSetPrefix("")
-                .schedulingBatchSize(100)
+                .schedulingBatchSize(50)
                 .build();
 
         connection = redisClient.connect().sync();
@@ -190,7 +190,7 @@ class DelayedEventServiceTest {
 
     @Test
     void differentEventsHandledInParallel() throws InterruptedException {
-        enqueue(90, id -> {
+        enqueue(30, id -> {
             String str = Integer.toString(id);
             switch (id % 3) {
                 case 2:
@@ -206,7 +206,7 @@ class DelayedEventServiceTest {
         eventService.addBlockingHandler(DummyEvent2.class, this::randomSleep, 3);
         eventService.addBlockingHandler(DummyEvent3.class, this::randomSleep, 3);
 
-        assertThat(connection.zcard(DELAYED_QUEUE), equalTo(90L));
+        assertThat(connection.zcard(DELAYED_QUEUE), equalTo(30L));
 
         eventService.dispatchDelayedMessages();
 
@@ -421,15 +421,15 @@ class DelayedEventServiceTest {
 
     @Test
     void dispatchLimit() {
-        enqueue(110);
+        enqueue(70);
 
-        assertThat(connection.zcard(DELAYED_QUEUE), equalTo(110L));
+        assertThat(connection.zcard(DELAYED_QUEUE), equalTo(70L));
 
         long maxScore = System.currentTimeMillis();
 
         eventService.dispatchDelayedMessages();
 
-        assertThat(connection.zcount(DELAYED_QUEUE, Range.create(0, maxScore)), equalTo(10L));
+        assertThat(connection.zcount(DELAYED_QUEUE, Range.create(0, maxScore)), equalTo(20L));
     }
 
     @Test
