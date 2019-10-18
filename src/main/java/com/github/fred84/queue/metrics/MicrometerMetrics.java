@@ -24,13 +24,13 @@ public class MicrometerMetrics implements Metrics {
 
     @Override
     public void registerScheduledCountSupplier(Supplier<Number> countSupplier) {
-        Gauge.builder("scheduled.count", countSupplier)
+        Gauge.builder("delayed.queue.scheduled.count", countSupplier)
                 .register(registry);
     }
 
     @Override
     public <T extends Event> void registerReadyToProcessSupplier(Class<T> type, Supplier<Number> countSupplier) {
-        Gauge.builder("ready.for.handling.queue", countSupplier)
+        Gauge.builder("delayed.queue.ready.for.handling.count", countSupplier)
                 .tag("type", type.getSimpleName())
                 .register(registry);
     }
