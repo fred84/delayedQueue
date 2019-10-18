@@ -16,6 +16,7 @@ import com.github.fred84.queue.logging.MDCLogContext;
 import eu.rekawek.toxiproxy.Proxy;
 import eu.rekawek.toxiproxy.ToxiproxyClient;
 import io.lettuce.core.ClientOptions;
+import io.lettuce.core.Range;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisCommandTimeoutException;
 import io.lettuce.core.RedisConnectionException;
@@ -185,15 +186,6 @@ class DelayedEventServiceTest {
     void releaseConnection() {
         eventService.close();
         redisClient.shutdown();
-    }
-
-    boolean randomSleep(Event event) {
-        try {
-            TimeUnit.MILLISECONDS.sleep(1 + (new Random().nextInt(50)));
-        } catch (InterruptedException e) {
-            /* do nothing */
-        }
-        return true;
     }
 
     @Test
@@ -433,10 +425,11 @@ class DelayedEventServiceTest {
 
         assertThat(connection.zcard(DELAYED_QUEUE), equalTo(110L));
 
+        long maxScore = System.currentTimeMillis();
+
         eventService.dispatchDelayedMessages();
 
-        // srande with score > x
-        assertThat(connection.zcard(DELAYED_QUEUE), equalTo(10L));
+        assertThat(connection.zcount(DELAYED_QUEUE, Range.create(0, maxScore)), equalTo(10L));
     }
 
     @Test
@@ -457,7 +450,7 @@ class DelayedEventServiceTest {
     }
 
     @Test
-    void validateAddHanlder() {
+    void validateAddHandlder() {
         assertThrows(NullPointerException.class, () -> eventService.addHandler(null, e -> Mono.just(true), 1));
         assertThrows(NullPointerException.class, () -> eventService.addHandler(DummyEvent.class, null, 1));
         assertThrows(IllegalArgumentException.class, () -> eventService.addHandler(DummyEvent.class, e -> Mono.just(true), 0));
@@ -508,5 +501,14 @@ class DelayedEventServiceTest {
 
     private String toQueueName(Class<? extends Event> cls) {
         return cls.getSimpleName().toLowerCase();
+    }
+
+    private boolean randomSleep(Event event) {
+        try {
+            TimeUnit.MILLISECONDS.sleep(1 + (new Random().nextInt(50)));
+        } catch (InterruptedException e) {
+            /* do nothing */
+        }
+        return true;
     }
 }
