@@ -9,6 +9,8 @@ import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.fred84.queue.logging.LogContext;
 import com.github.fred84.queue.logging.NoopLogContext;
+import com.github.fred84.queue.metrics.Metrics;
+import com.github.fred84.queue.metrics.NoopMetrics;
 import io.lettuce.core.KeyValue;
 import io.lettuce.core.Limit;
 import io.lettuce.core.Range;
@@ -145,6 +147,7 @@ public class DelayedEventService implements Closeable {
 
     private final Scheduler handlerScheduler;
     private final RedisCommands<String, String> dispatchCommands;
+    private final RedisCommands<String, String> metricsCommands;
     private final RedisReactiveCommands<String, String> reactiveCommands;
     private final Scheduler single = Schedulers.newSingle("redis-single");
     private final ScheduledThreadPoolExecutor dispatcherExecutor = new ScheduledThreadPoolExecutor(1);
@@ -174,6 +177,7 @@ public class DelayedEventService implements Closeable {
         metadataHset = dataSetPrefix + "events";
 
         this.dispatchCommands = client.connect().sync();
+        this.metricsCommands = client.connect().sync();
         this.reactiveCommands = client.connect().reactive();
 
         if (builder.enableScheduling) {
@@ -184,6 +188,8 @@ public class DelayedEventService implements Closeable {
                     TimeUnit.NANOSECONDS
             );
         }
+
+        metrics.registerScheduledCountSupplier(() -> metricsCommands.zcard(zsetName));
     }
 
     @NotNull
@@ -259,6 +265,8 @@ public class DelayedEventService implements Closeable {
                     .map(v -> deserialize(eventType, v))
                     .onErrorContinue((e, r) -> LOG.warn("Unable to deserialize [{}]", r, e))
                     .subscribe(subscription);
+
+            metrics.registerReadyToProcessSupplier(eventType, () -> metricsCommands.llen(toQueueName(eventType)));
 
             return subscription;
         });
