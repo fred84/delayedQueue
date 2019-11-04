@@ -13,7 +13,7 @@ import reactor.core.scheduler.Scheduler;
 
 class InnerSubscriber<T extends Event> extends BaseSubscriber<EventEnvelope<T>> {
 
-    private static Logger LOG = LoggerFactory.getLogger(InnerSubscriber.class);
+    private static final Logger LOG = LoggerFactory.getLogger(InnerSubscriber.class);
 
     private final LogContext logContext;
     private final Function<T, Mono<Boolean>> handler;
