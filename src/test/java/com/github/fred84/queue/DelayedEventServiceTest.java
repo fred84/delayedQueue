@@ -1,9 +1,8 @@
 package com.github.fred84.queue;
 
-import static com.github.fred84.queue.DelayedEventService.DELAYED_QUEUE;
 import static com.github.fred84.queue.DelayedEventService.delayedEventService;
-import static com.github.fred84.queue.DelayedEventService.toQueueName;
 import static java.util.Collections.emptyMap;
+import static java.util.Optional.ofNullable;
 import static java.util.stream.Collectors.toList;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.equalTo;
@@ -17,6 +16,7 @@ import com.github.fred84.queue.logging.MDCLogContext;
 import eu.rekawek.toxiproxy.Proxy;
 import eu.rekawek.toxiproxy.ToxiproxyClient;
 import io.lettuce.core.ClientOptions;
+import io.lettuce.core.Range;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisCommandTimeoutException;
 import io.lettuce.core.RedisConnectionException;
@@ -26,9 +26,9 @@ import java.beans.ConstructorProperties;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.time.Duration;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -69,7 +69,7 @@ class DelayedEventServiceTest {
             if (!(o instanceof DummyEvent)) {
                 return false;
             }
-            var that = (DummyEvent) o;
+            DummyEvent that = (DummyEvent) o;
             return Objects.equals(id, that.id);
         }
 
@@ -102,7 +102,7 @@ class DelayedEventServiceTest {
             if (!(o instanceof DummyEvent2)) {
                 return false;
             }
-            var that = (DummyEvent2) o;
+            DummyEvent2 that = (DummyEvent2) o;
             return Objects.equals(id, that.id);
         }
 
@@ -135,7 +135,7 @@ class DelayedEventServiceTest {
             if (!(o instanceof DummyEvent3)) {
                 return false;
             }
-            var that = (DummyEvent3) o;
+            DummyEvent3 that = (DummyEvent3) o;
             return Objects.equals(id, that.id);
         }
 
@@ -145,7 +145,8 @@ class DelayedEventServiceTest {
         }
     }
 
-    private static final String TOXIPROXY_IP = Optional.ofNullable(System.getenv("TOXIPROXY_IP")).orElse("127.0.0.1");
+    private static final String DELAYED_QUEUE = "delayed_events";
+    private static final String TOXIPROXY_IP = ofNullable(System.getenv("TOXIPROXY_IP")).orElse("127.0.0.1");
 
     private RedisClient redisClient;
     private RedisCommands<String, String> connection;
@@ -173,6 +174,8 @@ class DelayedEventServiceTest {
                 .enableScheduling(false)
                 .pollingTimeout(Duration.ofSeconds(1))
                 .logContext(new MDCLogContext())
+                .dataSetPrefix("")
+                .schedulingBatchSize(50)
                 .build();
 
         connection = redisClient.connect().sync();
@@ -185,19 +188,10 @@ class DelayedEventServiceTest {
         redisClient.shutdown();
     }
 
-    boolean randomSleep(Event event) {
-        try {
-            TimeUnit.MILLISECONDS.sleep(1 + (new Random().nextInt(50)));
-        } catch (InterruptedException e) {
-            /* do nothing */
-        }
-        return true;
-    }
-
     @Test
     void differentEventsHandledInParallel() throws InterruptedException {
-        enqueue(90, id -> {
-            var str = Integer.toString(id);
+        enqueue(30, id -> {
+            String str = Integer.toString(id);
             switch (id % 3) {
                 case 2:
                     return new DummyEvent3(str);
@@ -212,7 +206,7 @@ class DelayedEventServiceTest {
         eventService.addBlockingHandler(DummyEvent2.class, this::randomSleep, 3);
         eventService.addBlockingHandler(DummyEvent3.class, this::randomSleep, 3);
 
-        assertThat(connection.zcard(DELAYED_QUEUE), equalTo(90L));
+        assertThat(connection.zcard(DELAYED_QUEUE), equalTo(30L));
 
         eventService.dispatchDelayedMessages();
 
@@ -247,7 +241,7 @@ class DelayedEventServiceTest {
 
     @Test
     void verifyLogContext() throws InterruptedException {
-        var collector = new ConcurrentHashMap<String, String>();
+        Map<String, String> collector = new ConcurrentHashMap<>();
 
         eventService.addBlockingHandler(
                 DummyEvent.class,
@@ -259,7 +253,7 @@ class DelayedEventServiceTest {
         );
 
         enqueue(3, id -> {
-            var str = Integer.toString(id);
+            String str = Integer.toString(id);
             MDC.put("key", str);
             return new DummyEvent(str);
         });
@@ -268,7 +262,12 @@ class DelayedEventServiceTest {
 
         Thread.sleep(100);
 
-        assertThat(collector, equalTo(Map.of("0", "0", "1", "1", "2", "2")));
+        Map<String, String> expected = new HashMap<>();
+        expected.put("0", "0");
+        expected.put("1", "1");
+        expected.put("2", "2");
+
+        assertThat(collector, equalTo(expected));
     }
 
     @Test
@@ -421,6 +420,19 @@ class DelayedEventServiceTest {
     }
 
     @Test
+    void dispatchLimit() {
+        enqueue(70);
+
+        assertThat(connection.zcard(DELAYED_QUEUE), equalTo(70L));
+
+        long maxScore = System.currentTimeMillis();
+
+        eventService.dispatchDelayedMessages();
+
+        assertThat(connection.zcount(DELAYED_QUEUE, Range.create(0, maxScore)), equalTo(20L));
+    }
+
+    @Test
     void duplicateItems() {
         DummyEvent event = new DummyEvent("1");
 
@@ -438,7 +450,7 @@ class DelayedEventServiceTest {
     }
 
     @Test
-    void validateAddHanlder() {
+    void validateAddHandlder() {
         assertThrows(NullPointerException.class, () -> eventService.addHandler(null, e -> Mono.just(true), 1));
         assertThrows(NullPointerException.class, () -> eventService.addHandler(DummyEvent.class, null, 1));
         assertThrows(IllegalArgumentException.class, () -> eventService.addHandler(DummyEvent.class, e -> Mono.just(true), 0));
@@ -485,5 +497,18 @@ class DelayedEventServiceTest {
                 .merge(stream.mapToObj(id -> eventService.enqueueWithDelayInner(transformer.apply(id), Duration.ZERO)).collect(toList()))
                 .collectList()
                 .block();
+    }
+
+    private String toQueueName(Class<? extends Event> cls) {
+        return cls.getSimpleName().toLowerCase();
+    }
+
+    private boolean randomSleep(Event event) {
+        try {
+            TimeUnit.MILLISECONDS.sleep(1 + (new Random().nextInt(50)));
+        } catch (InterruptedException e) {
+            /* do nothing */
+        }
+        return true;
     }
 }

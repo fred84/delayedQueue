@@ -1,17 +1,15 @@
 language: java
 
 os: linux
-dist: bionic
+dist: xenial
 jdk:
+  - openjdk8
   - openjdk11
 
 addons:
   apt:
     packages:
       - toxiproxy
-
-env:
-  - TOXIPROXY_IP=127.0.1.1
 
 services:
   - redis-server
@@ -26,4 +24,4 @@ cache:
     - $HOME/.gradle/wrapper
 
 script:
-  - ./gradlew check
+  - ./gradlew check --stacktrace

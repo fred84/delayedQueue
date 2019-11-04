@@ -13,7 +13,7 @@ import reactor.core.scheduler.Scheduler;
 
 class InnerSubscriber<T extends Event> extends BaseSubscriber<EventEnvelope<T>> {
 
-    private static Logger LOG = LoggerFactory.getLogger(InnerSubscriber.class);
+    private static final Logger LOG = LoggerFactory.getLogger(InnerSubscriber.class);
 
     private final LogContext logContext;
     private final Function<T, Mono<Boolean>> handler;
@@ -47,7 +47,7 @@ class InnerSubscriber<T extends Event> extends BaseSubscriber<EventEnvelope<T>> 
     protected void hookOnNext(EventEnvelope<T> envelope) {
         LOG.debug("event [{}] received from queue", envelope);
 
-        var promise = handler.apply(envelope.getPayload());
+        Mono<Boolean> promise = handler.apply(envelope.getPayload());
 
         if (promise == null) {
             requestInner(1);
