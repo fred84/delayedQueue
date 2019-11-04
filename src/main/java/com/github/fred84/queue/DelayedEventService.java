@@ -135,7 +135,7 @@ public class DelayedEventService implements Closeable {
     }
 
     private static final String DELIMITER = "###";
-    private static Logger LOG = LoggerFactory.getLogger(DelayedEventService.class);
+    private static final Logger LOG = LoggerFactory.getLogger(DelayedEventService.class);
 
     private final Map<Class<? extends Event>, Disposable> subscriptions = new ConcurrentHashMap<>();
 
@@ -245,7 +245,7 @@ public class DelayedEventService implements Closeable {
                             r -> pollingConnection
                                     .reactive()
                                     .brpop(pollingTimeout.toMillis() * 1000, queue)
-                                    .doOnNext(v -> metrics.incrementCounterFor(eventType, "handle"))
+                                    .doOnNext(v -> metrics.incrementDequeueCounter(eventType))
                                     .doOnError(e -> {
                                         if (e instanceof RedisCommandTimeoutException) {
                                             LOG.debug("polling command timed out");
@@ -303,7 +303,7 @@ public class DelayedEventService implements Closeable {
             String rawEnvelope = serialize(EventEnvelope.create(event, context));
             reactiveCommands.hset(metadataHset, key, rawEnvelope).subscribeOn(single).subscribe();
             reactiveCommands.zadd(zsetName, nx(), System.currentTimeMillis() + delay.toMillis(), key).subscribeOn(single).subscribe();
-        }).doOnNext(v -> metrics.incrementCounterFor(event.getClass(), "enqueue"));
+        }).doOnNext(v -> metrics.incrementEnqueueCounter(event.getClass()));
     }
 
     void dispatchDelayedMessages() {

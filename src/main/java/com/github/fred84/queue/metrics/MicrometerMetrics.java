@@ -18,8 +18,13 @@ public class MicrometerMetrics implements Metrics {
     }
 
     @Override
-    public <T extends Event> void incrementCounterFor(Class<T> type, String direction) {
-        getCounter(type, direction).increment();
+    public <T extends Event> void incrementEnqueueCounter(Class<T> type) {
+        getCounter(type, "enqueue").increment();
+    }
+
+    @Override
+    public <T extends Event> void incrementDequeueCounter(Class<T> type) {
+        getCounter(type, "dequeue").increment();
     }
 
     @Override
