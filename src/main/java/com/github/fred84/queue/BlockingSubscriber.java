@@ -1,13 +1,14 @@
 package com.github.fred84.queue;
 
 import java.util.function.Function;
+import java.util.function.Predicate;
 import reactor.core.publisher.Mono;
 
 class BlockingSubscriber<T extends Event> implements Function<T, Mono<Boolean>> {
 
-    private final Function<T, Boolean> handler;
+    private final Predicate<T> handler;
 
-    BlockingSubscriber(Function<T, Boolean> handler) {
+    BlockingSubscriber(Predicate<T> handler) {
         this.handler = handler;
     }
 
@@ -18,7 +19,7 @@ class BlockingSubscriber<T extends Event> implements Function<T, Mono<Boolean>> 
         }
 
         try {
-            return Mono.fromSupplier(() -> handler.apply(event));
+            return Mono.fromSupplier(() -> handler.test(event));
         } catch (Exception e) {
             return Mono.just(false);
         }

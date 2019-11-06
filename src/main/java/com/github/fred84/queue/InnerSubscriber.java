@@ -1,5 +1,7 @@
 package com.github.fred84.queue;
 
+import static java.lang.Boolean.TRUE;
+
 import com.github.fred84.queue.logging.LogContext;
 import io.lettuce.core.TransactionResult;
 import io.lettuce.core.api.StatefulRedisConnection;
@@ -47,7 +49,15 @@ class InnerSubscriber<T extends Event> extends BaseSubscriber<EventEnvelope<T>> 
     protected void hookOnNext(EventEnvelope<T> envelope) {
         LOG.debug("event [{}] received from queue", envelope);
 
-        Mono<Boolean> promise = handler.apply(envelope.getPayload());
+        Mono<Boolean> promise;
+
+        try {
+            promise = handler.apply(envelope.getPayload());
+        } catch (Exception e) {
+            LOG.info("error in non-blocking handler for [{}]", envelope.getType(), e);
+            requestInner(1);
+            return;
+        }
 
         if (promise == null) {
             requestInner(1);
@@ -60,7 +70,7 @@ class InnerSubscriber<T extends Event> extends BaseSubscriber<EventEnvelope<T>> 
                 .doOnError(e -> LOG.warn("error occurred during handling event [{}]", envelope, e))
                 .onErrorReturn(false)
                 .flatMap(completed -> {
-                    if (completed) {
+                    if (TRUE.equals(completed)) {
                         LOG.debug("deleting event {} from delayed queue", envelope.getPayload());
                         return deleteCommand.apply(envelope.getPayload()).map(r -> true);
                     } else {
@@ -83,5 +93,11 @@ class InnerSubscriber<T extends Event> extends BaseSubscriber<EventEnvelope<T>> 
     private void requestInner(long n) {
         LOG.debug("requesting next {} elements", n);
         request(n);
+    }
+
+    @Override
+    public void dispose() {
+        pollingConnection.close();
+        super.dispose();
     }
 }

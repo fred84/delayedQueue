@@ -34,6 +34,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import javax.annotation.PreDestroy;
 import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
@@ -123,7 +124,7 @@ public class DelayedEventService implements Closeable {
         }
 
         @NotNull
-        public Builder schedulingBatchSize(@NotNull int val) {
+        public Builder schedulingBatchSize(int val) {
             schedulingBatchSize = val;
             return this;
         }
@@ -210,7 +211,7 @@ public class DelayedEventService implements Closeable {
 
     public <T extends Event> void addBlockingHandler(
             @NotNull Class<T> eventType,
-            @NotNull Function<@NotNull T, Boolean> handler,
+            @NotNull Predicate<@NotNull T> handler,
             int parallelism
     ) {
         requireNonNull(handler, "handler");
@@ -244,23 +245,23 @@ public class DelayedEventService implements Closeable {
                     .flatMap(
                             r -> pollingConnection
                                     .reactive()
-                                    .brpop(pollingTimeout.toMillis() * 1000, queue)
-                                    .doOnNext(v -> metrics.incrementDequeueCounter(eventType))
+                                    .brpop(pollingTimeout.toMillis() / 1000, queue)
                                     .doOnError(e -> {
                                         if (e instanceof RedisCommandTimeoutException) {
-                                            LOG.debug("polling command timed out");
+                                            LOG.debug("polling command timed out ({} seconds)", pollingTimeout.toMillis() / 1000);
                                         } else {
                                             LOG.warn("error polling redis queue", e);
                                         }
                                         pollingConnection.reset();
                                     })
-                                    .onErrorReturn(KeyValue.empty("key")),
+                                    .onErrorReturn(KeyValue.empty(eventType.getName())),
                             1, // it doesn't make sense to do requests on single connection in parallel
                             parallelism
                     )
                     .publishOn(handlerScheduler, parallelism)
                     .defaultIfEmpty(KeyValue.empty(queue))
                     .filter(Value::hasValue)
+                    .doOnNext(v -> metrics.incrementDequeueCounter(eventType))
                     .map(Value::getValue)
                     .map(v -> deserialize(eventType, v))
                     .onErrorContinue((e, r) -> LOG.warn("Unable to deserialize [{}]", r, e))
@@ -291,6 +292,7 @@ public class DelayedEventService implements Closeable {
 
         dispatchCommands.getStatefulConnection().close();
         reactiveCommands.getStatefulConnection().close();
+        metricsCommands.getStatefulConnection().close();
 
         handlerScheduler.dispose();
     }
@@ -302,7 +304,7 @@ public class DelayedEventService implements Closeable {
             String key = getKey(event);
             String rawEnvelope = serialize(EventEnvelope.create(event, context));
             reactiveCommands.hset(metadataHset, key, rawEnvelope).subscribeOn(single).subscribe();
-            reactiveCommands.zadd(zsetName, nx(), System.currentTimeMillis() + delay.toMillis(), key).subscribeOn(single).subscribe();
+            reactiveCommands.zadd(zsetName, nx(), (System.currentTimeMillis() + delay.toMillis()), key).subscribeOn(single).subscribe();
         }).doOnNext(v -> metrics.incrementEnqueueCounter(event.getClass()));
     }
 
@@ -360,7 +362,7 @@ public class DelayedEventService implements Closeable {
         // We could have stale data because other instance already processed and deleted this key
         if (rawEnvelope == null) {
             if (dispatchCommands.zrem(zsetName, key) > 0) {
-                LOG.debug("key '" + key + "' not found in HSET"); // log debug strings could be avoided
+                LOG.debug("key '{}' not found in HSET", key);
             }
 
             return;
@@ -391,14 +393,14 @@ public class DelayedEventService implements Closeable {
 
     private long nextDelay(int attempt) {
         if (attempt < 10) { // first 10 attempts each 10 seconds
-            return 10;
+            return 10L;
         }
 
         if (attempt < 10 + 10) { // next 10 attempts each minute
-            return 60;
+            return 60L;
         }
 
-        return 60 * 24; // next 50 attempts once an hour
+        return 60L * 24; // next 50 attempts once an hour
     }
 
     private String serialize(EventEnvelope<? extends Event> envelope) {

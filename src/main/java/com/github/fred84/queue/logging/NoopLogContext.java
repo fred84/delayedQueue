@@ -6,7 +6,6 @@ import java.util.Map;
 
 public class NoopLogContext implements LogContext {
 
-
     @Override
     public Map<String, String> get() {
         return emptyMap();
@@ -14,6 +13,6 @@ public class NoopLogContext implements LogContext {
 
     @Override
     public void set(Map<String, String> context) {
-        // do nothing
+        // no-op
     }
 }
