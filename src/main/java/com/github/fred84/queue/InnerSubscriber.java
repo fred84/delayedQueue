@@ -49,7 +49,15 @@ class InnerSubscriber<T extends Event> extends BaseSubscriber<EventEnvelope<T>> 
     protected void hookOnNext(EventEnvelope<T> envelope) {
         LOG.debug("event [{}] received from queue", envelope);
 
-        Mono<Boolean> promise = handler.apply(envelope.getPayload());
+        Mono<Boolean> promise;
+
+        try {
+            promise = handler.apply(envelope.getPayload());
+        } catch (Exception e) {
+            LOG.info("error in non-blocking handler for [{}]", envelope.getType(), e);
+            requestInner(1);
+            return;
+        }
 
         if (promise == null) {
             requestInner(1);

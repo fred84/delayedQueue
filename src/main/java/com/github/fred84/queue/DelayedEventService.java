@@ -245,10 +245,10 @@ public class DelayedEventService implements Closeable {
                     .flatMap(
                             r -> pollingConnection
                                     .reactive()
-                                    .brpop(pollingTimeout.toNanos() * 1000, queue)
+                                    .brpop(pollingTimeout.toMillis() / 1000, queue)
                                     .doOnError(e -> {
                                         if (e instanceof RedisCommandTimeoutException) {
-                                            LOG.debug("polling command timed out");
+                                            LOG.debug("polling command timed out ({} seconds)", pollingTimeout.toMillis() / 1000);
                                         } else {
                                             LOG.warn("error polling redis queue", e);
                                         }

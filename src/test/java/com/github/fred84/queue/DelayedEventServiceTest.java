@@ -425,14 +425,16 @@ class DelayedEventServiceTest {
                 e -> {
                     latch.countDown();
 
-                    switch ((Integer.parseInt(e.getId())) % 4) {
-                        case 0: return Mono.error(new RuntimeException("no-no"));
-                        case 1: return Mono.just(true);
+                    switch ((Integer.parseInt(e.getId())) % 5) {
+                        case 0: return Mono.just(true);
+                        case 1: return Mono.error(new RuntimeException("no-no"));
                         case 2: return Mono.empty();
+                        case 3: return null;
+                        case 4: throw new RuntimeException("oops");
                         default: return Mono.just(false);
                     }
                 },
-                3
+                6
         );
 
         enqueue(6);

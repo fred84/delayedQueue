@@ -1,7 +1,5 @@
 package com.github.fred84.queue;
 
-import static java.lang.Boolean.FALSE;
-
 import java.util.function.Function;
 import java.util.function.Predicate;
 import reactor.core.publisher.Mono;
@@ -23,7 +21,7 @@ class BlockingSubscriber<T extends Event> implements Function<T, Mono<Boolean>> 
         try {
             return Mono.fromSupplier(() -> handler.test(event));
         } catch (Exception e) {
-            return Mono.just(FALSE);
+            return Mono.just(false);
         }
     }
 }
