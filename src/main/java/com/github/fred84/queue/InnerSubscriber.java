@@ -1,6 +1,5 @@
 package com.github.fred84.queue;
 
-import static java.lang.Boolean.FALSE;
 import static java.lang.Boolean.TRUE;
 
 import com.github.fred84.queue.logging.LogContext;
@@ -59,16 +58,15 @@ class InnerSubscriber<T extends Event> extends BaseSubscriber<EventEnvelope<T>> 
 
         promise
                 .doFirst(() -> logContext.set(envelope.getLogContext()))
-                .defaultIfEmpty(FALSE)
+                .defaultIfEmpty(false)
                 .doOnError(e -> LOG.warn("error occurred during handling event [{}]", envelope, e))
-                .onErrorReturn(FALSE)
+                .onErrorReturn(false)
                 .flatMap(completed -> {
                     if (TRUE.equals(completed)) {
                         LOG.debug("deleting event {} from delayed queue", envelope.getPayload());
-                        return deleteCommand.apply(envelope.getPayload()).map(r -> TRUE);
+                        return deleteCommand.apply(envelope.getPayload()).map(r -> true);
                     } else {
-                        LOG.debug("shit");
-                        return Mono.just(TRUE);
+                        return Mono.just(true);
                     }
                 })
                 .subscribeOn(handlerScheduler)

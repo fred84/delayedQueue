@@ -30,6 +30,7 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -206,10 +207,9 @@ class DelayedEventServiceTest {
 
         CountDownLatch latch = new CountDownLatch(30);
 
-        // todo should we add randomness with sleep?
-        eventService.addBlockingHandler(DummyEvent.class, e -> randomSleep(e, latch), 3);
-        eventService.addBlockingHandler(DummyEvent2.class, e -> randomSleep(e, latch), 3);
-        eventService.addBlockingHandler(DummyEvent3.class, e -> randomSleep(e, latch), 3);
+        eventService.addBlockingHandler(DummyEvent.class, e -> randomSleepBeforeCountdown(latch), 3);
+        eventService.addBlockingHandler(DummyEvent2.class, e -> randomSleepBeforeCountdown(latch), 3);
+        eventService.addBlockingHandler(DummyEvent3.class, e -> randomSleepBeforeCountdown(latch), 3);
 
         assertZsetCardinality(30L);
 
@@ -221,14 +221,13 @@ class DelayedEventServiceTest {
     }
 
     @Test
-    void backPressureIsApplied() throws InterruptedException {
+    void backPressureIsApplied() {
         enqueue(10);
 
         assertThat(connection.zcard(DELAYED_QUEUE), equalTo(10L));
 
         eventService.dispatchDelayedMessages();
 
-        // todo think how to use with latch
         final Semaphore sem = new Semaphore(1);
 
         eventService.addBlockingHandler(
@@ -331,10 +330,14 @@ class DelayedEventServiceTest {
         enqueue(IntStream.range(11, 20));
         eventService.dispatchDelayedMessages();
 
-        eventService.addBlockingHandler(DummyEvent.class, e -> {
-            latch.countDown();
-            return true;
-        }, 1);
+        eventService.addBlockingHandler(
+                DummyEvent.class,
+                e -> {
+                    latch.countDown();
+                    return true;
+                },
+                1
+        );
 
         latch.await(500, MILLISECONDS);
 
@@ -347,7 +350,7 @@ class DelayedEventServiceTest {
 
         redisProxy.delete();
 
-        MILLISECONDS.sleep(500); // more than pop timeout
+        MILLISECONDS.sleep(POLLING_TIMEOUT.toMillis() + 100);
 
         redisProxy = createRedisProxy();
 
@@ -386,11 +389,8 @@ class DelayedEventServiceTest {
         assertThrows(RedisCommandTimeoutException.class, () -> eventService.dispatchDelayedMessages());
     }
 
-    // todo explicit test for reset
-    // todo test for remove handler
-    // todo add cases for - non-blocking
     @Test
-    void subscriberErrorHandling() throws InterruptedException {
+    void blockingSubscriberErrorHandling() throws InterruptedException {
         CountDownLatch latch = new CountDownLatch(5);
 
         eventService.addBlockingHandler(
@@ -408,6 +408,34 @@ class DelayedEventServiceTest {
         );
 
         enqueue(5);
+
+        latch.await(500, MILLISECONDS);
+
+        eventService.dispatchDelayedMessages();
+
+        waitAndAssertZsetCardinality(4L);
+    }
+
+    @Test
+    void subscriberErrorHandling() throws InterruptedException {
+        CountDownLatch latch = new CountDownLatch(6);
+
+        eventService.addHandler(
+                DummyEvent.class,
+                e -> {
+                    latch.countDown();
+
+                    switch ((Integer.parseInt(e.getId())) % 4) {
+                        case 0: return Mono.error(new RuntimeException("no-no"));
+                        case 1: return Mono.just(true);
+                        case 2: return Mono.empty();
+                        default: return Mono.just(false);
+                    }
+                },
+                3
+        );
+
+        enqueue(6);
 
         latch.await(500, MILLISECONDS);
 
@@ -456,6 +484,22 @@ class DelayedEventServiceTest {
         eventService.enqueueWithDelayInner(event, Duration.ZERO).block();
 
         assertZsetCardinality(1L);
+    }
+
+    @Test
+    void removeHandler() {
+        enqueue(10);
+
+        eventService.addBlockingHandler(DummyEvent.class, e -> true, 1);
+
+        eventService.dispatchDelayedMessages();
+        waitAndAssertZsetCardinality(0L);
+
+        eventService.removeHandler(DummyEvent.class);
+
+        enqueue(10);
+
+        waitAndAssertZsetCardinality(10L);
     }
 
     @Test
@@ -519,17 +563,33 @@ class DelayedEventServiceTest {
         return cls.getSimpleName().toLowerCase();
     }
 
-    private boolean randomSleep(Event event, CountDownLatch latch) {
+    private boolean randomSleepBeforeCountdown(CountDownLatch latch) {
+        sleepMillis(1 + new Random().nextInt(30));
         latch.countDown();
         return true;
     }
 
-    private void waitAndAssertZsetCardinality(long expected) throws InterruptedException {
-        MILLISECONDS.sleep(100);
+    private void waitAndAssertZsetCardinality(long expected) {
+        for (int i = 0; i < 5; i++) {
+            sleepMillis(25);
+
+            if (connection.zcard(DELAYED_QUEUE) == expected) {
+                return;
+            }
+        }
+
         assertZsetCardinality(expected);
     }
 
     private void assertZsetCardinality(long expected) {
         assertThat(connection.zcard(DELAYED_QUEUE), equalTo(expected));
+    }
+
+    private void sleepMillis(long duration) {
+        try {
+            MILLISECONDS.sleep(duration);
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
     }
 }
