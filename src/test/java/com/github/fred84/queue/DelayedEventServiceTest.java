@@ -255,7 +255,7 @@ class DelayedEventServiceTest {
                     latch.countDown();
                     return true;
                 },
-                1
+                3
         );
 
         enqueue(3, id -> {
@@ -283,13 +283,9 @@ class DelayedEventServiceTest {
         eventService.addBlockingHandler(
                 DummyEvent.class,
                 e -> {
-                    try {
-                        MILLISECONDS.sleep(500);
-                        latch.countDown();
-                        return true;
-                    } catch (InterruptedException ex) {
-                        throw new RuntimeException(ex);
-                    }
+                    sleepMillis(500);
+                    latch.countDown();
+                    return true;
                 },
                 10
         );
@@ -404,7 +400,7 @@ class DelayedEventServiceTest {
                         default: return false;
                     }
                 },
-                3
+                1
         );
 
         enqueue(5);
@@ -418,7 +414,7 @@ class DelayedEventServiceTest {
 
     @Test
     void subscriberErrorHandling() throws InterruptedException {
-        CountDownLatch latch = new CountDownLatch(6);
+        CountDownLatch latch = new CountDownLatch(7);
 
         eventService.addHandler(
                 DummyEvent.class,
@@ -426,24 +422,24 @@ class DelayedEventServiceTest {
                     latch.countDown();
 
                     switch ((Integer.parseInt(e.getId())) % 5) {
-                        case 0: return Mono.just(true);
-                        case 1: return Mono.error(new RuntimeException("no-no"));
-                        case 2: return Mono.empty();
-                        case 3: return null;
-                        case 4: throw new RuntimeException("oops");
+                        case 0: throw new RuntimeException("oops");
+                        case 1: return Mono.just(true);
+                        case 2: return Mono.error(new RuntimeException("no-no"));
+                        case 3: return Mono.empty();
+                        case 4: return null;
                         default: return Mono.just(false);
                     }
                 },
-                6
+                1
         );
 
-        enqueue(6);
+        enqueue(7);
 
         latch.await(500, MILLISECONDS);
 
         eventService.dispatchDelayedMessages();
 
-        waitAndAssertZsetCardinality(4L);
+        waitAndAssertZsetCardinality(5L);
     }
 
     @Test
