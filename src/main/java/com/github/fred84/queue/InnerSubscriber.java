@@ -72,6 +72,7 @@ class InnerSubscriber<T extends Event> extends BaseSubscriber<EventEnvelope<T>> 
                 .flatMap(completed -> {
                     if (TRUE.equals(completed)) {
                         LOG.debug("deleting event {} from delayed queue", envelope.getPayload());
+                        // todo we could also fail here!!! test me! with latch and toxyproxy
                         return deleteCommand.apply(envelope.getPayload()).map(r -> true);
                     } else {
                         return Mono.just(true);

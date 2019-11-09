@@ -3,6 +3,7 @@ package com.github.fred84.queue;
 import static io.lettuce.core.SetArgs.Builder.ex;
 import static io.lettuce.core.ZAddArgs.Builder.nx;
 import static java.util.Objects.requireNonNull;
+import static java.util.concurrent.TimeUnit.NANOSECONDS;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JavaType;
@@ -32,7 +33,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import javax.annotation.PreDestroy;
@@ -59,6 +59,7 @@ public class DelayedEventService implements Closeable {
         private Metrics metrics = new NoopMetrics();
         private LogContext logContext = new NoopLogContext();
         private String dataSetPrefix = "de_";
+        private Duration refreshSubscriptionInterval;
 
         private Builder() {
         }
@@ -130,15 +131,37 @@ public class DelayedEventService implements Closeable {
         }
 
         @NotNull
+        public Builder refreshSubscriptionsInterval(@NotNull Duration val) {
+            refreshSubscriptionInterval = val;
+            return this;
+        }
+
+        @NotNull
         public DelayedEventService build() {
             return new DelayedEventService(this);
+        }
+    }
+
+    private static class HandlerAndSubscription<T extends Event> {
+        private final Function<T, Mono<Boolean>> handler;
+        private final int parallelism;
+        private volatile Disposable subscription;
+
+        private HandlerAndSubscription(
+                Function<T, Mono<Boolean>> handler,
+                int parallelism,
+                Disposable subscription
+        ) {
+            this.handler = handler;
+            this.parallelism = parallelism;
+            this.subscription = subscription;
         }
     }
 
     private static final String DELIMITER = "###";
     private static final Logger LOG = LoggerFactory.getLogger(DelayedEventService.class);
 
-    private final Map<Class<? extends Event>, Disposable> subscriptions = new ConcurrentHashMap<>();
+    private final Map<Class<? extends Event>, HandlerAndSubscription> subscriptions = new ConcurrentHashMap<>();
 
     private final ObjectMapper mapper;
     private final RedisClient client;
@@ -177,20 +200,29 @@ public class DelayedEventService implements Closeable {
         lockKey = dataSetPrefix + "delayed_events_lock";
         metadataHset = dataSetPrefix + "events";
 
-        this.dispatchCommands = client.connect().sync();
-        this.metricsCommands = client.connect().sync();
-        this.reactiveCommands = client.connect().reactive();
+        dispatchCommands = client.connect().sync();
+        metricsCommands = client.connect().sync();
+        reactiveCommands = client.connect().reactive();
 
         if (builder.enableScheduling) {
-            dispatcherExecutor.scheduleWithFixedDelay(
-                    this::dispatchDelayedMessages,
-                    0,
-                    checkNotShorter(builder.schedulingInterval, Duration.ofMillis(50), "scheduling interval").toNanos(),
-                    TimeUnit.NANOSECONDS
-            );
+            long schedulingInterval = checkNotShorter(builder.schedulingInterval, Duration.ofMillis(50), "scheduling interval").toNanos();
+            dispatcherExecutor.scheduleWithFixedDelay(this::dispatchDelayedMessages, schedulingInterval, schedulingInterval, NANOSECONDS);
+        }
+
+        if (builder.refreshSubscriptionInterval != null) {
+            long refreshInterval = checkNotShorter(builder.schedulingInterval, Duration.ofMinutes(5), "refresh subscription interval").toNanos();
+            dispatcherExecutor.scheduleWithFixedDelay(this::refreshSubscriptions, refreshInterval, refreshInterval, NANOSECONDS);
         }
 
         metrics.registerScheduledCountSupplier(() -> metricsCommands.zcard(zsetName));
+    }
+
+    void refreshSubscriptions() {
+        subscriptions.forEach((k, v) -> {
+            LOG.info("refreshing subscription for [{}]", k);
+            v.subscription.dispose();
+            v.subscription = createSubscription(k, v.handler, v.parallelism); // replace
+        });
     }
 
     @NotNull
@@ -201,9 +233,9 @@ public class DelayedEventService implements Closeable {
     public <T extends Event> boolean removeHandler(@NotNull Class<T> eventType) {
         requireNonNull(eventType, "event type");
 
-        Disposable subscription = subscriptions.remove(eventType);
+        HandlerAndSubscription subscription = subscriptions.remove(eventType);
         if (subscription != null) {
-            subscription.dispose();
+            subscription.subscription.dispose();
             return true;
         }
         return false;
@@ -229,47 +261,9 @@ public class DelayedEventService implements Closeable {
         checkInRange(parallelism, 1, 100, "parallelism");
 
         subscriptions.computeIfAbsent(eventType, re -> {
-            StatefulRedisConnection<String, String> pollingConnection = client.connect();
-            InnerSubscriber<T> subscription = new InnerSubscriber<>(
-                    logContext,
-                    handler,
-                    parallelism,
-                    pollingConnection,
-                    handlerScheduler,
-                    this::removeFromDelayedQueue
-            );
-            String queue = toQueueName(eventType);
-
-            Flux
-                    .generate(sink -> sink.next(0))
-                    .flatMap(
-                            r -> pollingConnection
-                                    .reactive()
-                                    .brpop(pollingTimeout.toMillis() / 1000, queue)
-                                    .doOnError(e -> {
-                                        if (e instanceof RedisCommandTimeoutException) {
-                                            LOG.debug("polling command timed out ({} seconds)", pollingTimeout.toMillis() / 1000);
-                                        } else {
-                                            LOG.warn("error polling redis queue", e);
-                                        }
-                                        pollingConnection.reset();
-                                    })
-                                    .onErrorReturn(KeyValue.empty(eventType.getName())),
-                            1, // it doesn't make sense to do requests on single connection in parallel
-                            parallelism
-                    )
-                    .publishOn(handlerScheduler, parallelism)
-                    .defaultIfEmpty(KeyValue.empty(queue))
-                    .filter(Value::hasValue)
-                    .doOnNext(v -> metrics.incrementDequeueCounter(eventType))
-                    .map(Value::getValue)
-                    .map(v -> deserialize(eventType, v))
-                    .onErrorContinue((e, r) -> LOG.warn("Unable to deserialize [{}]", r, e))
-                    .subscribe(subscription);
-
+            InnerSubscriber<T> subscription = createSubscription(eventType, handler, parallelism);
             metrics.registerReadyToProcessSupplier(eventType, () -> metricsCommands.llen(toQueueName(eventType)));
-
-            return subscription;
+            return new HandlerAndSubscription<>(handler, parallelism, subscription);
         });
     }
 
@@ -287,7 +281,7 @@ public class DelayedEventService implements Closeable {
         LOG.debug("shutting down delayed queue service");
 
         dispatcherExecutor.shutdownNow();
-        subscriptions.forEach((k, v) -> v.dispose());
+        subscriptions.forEach((k, v) -> v.subscription.dispose());
         single.dispose();
 
         dispatchCommands.getStatefulConnection().close();
@@ -338,6 +332,52 @@ public class DelayedEventService implements Closeable {
             unlock();
             LOG.debug("delayed events dispatch finished");
         }
+    }
+
+    private <T extends Event> InnerSubscriber<T> createSubscription(
+            Class<T> eventType,
+            Function<T, Mono<Boolean>> handler,
+            int parallelism
+    ) {
+        StatefulRedisConnection<String, String> pollingConnection = client.connect();
+        InnerSubscriber<T> subscription = new InnerSubscriber<>(
+                logContext,
+                handler,
+                parallelism,
+                pollingConnection,
+                handlerScheduler,
+                this::removeFromDelayedQueue
+        );
+        String queue = toQueueName(eventType);
+
+        Flux
+                .generate(sink -> sink.next(0))
+                .flatMap(
+                        r -> pollingConnection
+                                .reactive()
+                                .brpop(pollingTimeout.toMillis() / 1000, queue)
+                                .doOnError(e -> {
+                                    if (e instanceof RedisCommandTimeoutException) {
+                                        LOG.debug("polling command timed out ({} seconds)", pollingTimeout.toMillis() / 1000);
+                                    } else {
+                                        LOG.warn("error polling redis queue", e);
+                                    }
+                                    pollingConnection.reset();
+                                })
+                                .onErrorReturn(KeyValue.empty(eventType.getName())),
+                        1, // it doesn't make sense to do requests on single connection in parallel
+                        parallelism
+                )
+                .publishOn(handlerScheduler, parallelism)
+                .defaultIfEmpty(KeyValue.empty(queue))
+                .filter(Value::hasValue)
+                .doOnNext(v -> metrics.incrementDequeueCounter(eventType))
+                .map(Value::getValue)
+                .map(v -> deserialize(eventType, v))
+                .onErrorContinue((e, r) -> LOG.warn("Unable to deserialize [{}]", r, e))
+                .subscribe(subscription);
+
+        return subscription;
     }
 
     private Mono<TransactionResult> removeFromDelayedQueue(Event event) {
