@@ -6,9 +6,8 @@ import static java.util.Collections.synchronizedList;
 import static java.util.Optional.ofNullable;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.stream.Collectors.toList;
+import static java.util.stream.Collectors.toSet;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.contains;
-import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.greaterThan;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -36,8 +35,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Random;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -512,7 +511,7 @@ class DelayedEventServiceTest {
     }
 
     @Test
-    void refreshSubscription() throws InterruptedException {
+    void failedEventsDuringRefreshWouldBeHandledLater() throws InterruptedException {
         enqueue(10);
 
         CountDownLatch latch1 = new CountDownLatch(1);
@@ -546,12 +545,19 @@ class DelayedEventServiceTest {
 
         waitAndAssertZsetCardinality(10 - handledIds.size());
 
-        List<String> unhandledIds = IntStream.range(0, 10)
+        Set<String> unhandledIds = IntStream.range(0, 10)
                 .mapToObj(Integer::toString)
                 .filter(i -> !handledIds.contains(i))
-                .collect(toList());
+                .collect(toSet());
 
-        //assertThat(connection.hkeys("de_events"), containsInAnyOrder(unhandledIds));
+
+        Set<String> leftForProcessing = connection
+                .hkeys("events")
+                .stream()
+                .filter(s -> s.contains("###")).map(s -> s.split("###")[1])
+                .collect(toSet());
+
+        assertThat(leftForProcessing, equalTo(unhandledIds));
     }
 
     @Test

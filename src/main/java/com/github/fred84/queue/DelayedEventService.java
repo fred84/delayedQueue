@@ -210,7 +210,11 @@ public class DelayedEventService implements Closeable {
         }
 
         if (builder.refreshSubscriptionInterval != null) {
-            long refreshInterval = checkNotShorter(builder.schedulingInterval, Duration.ofMinutes(5), "refresh subscription interval").toNanos();
+            long refreshInterval = checkNotShorter(
+                    builder.schedulingInterval,
+                    Duration.ofMinutes(5),
+                    "refresh subscription interval"
+            ).toNanos();
             dispatcherExecutor.scheduleWithFixedDelay(this::refreshSubscriptions, refreshInterval, refreshInterval, NANOSECONDS);
         }
 
@@ -297,6 +301,7 @@ public class DelayedEventService implements Closeable {
         return executeInTransaction(() -> {
             String key = getKey(event);
             String rawEnvelope = serialize(EventEnvelope.create(event, context));
+
             reactiveCommands.hset(metadataHset, key, rawEnvelope).subscribeOn(single).subscribe();
             reactiveCommands.zadd(zsetName, nx(), (System.currentTimeMillis() + delay.toMillis()), key).subscribeOn(single).subscribe();
         }).doOnNext(v -> metrics.incrementEnqueueCounter(event.getClass()));
