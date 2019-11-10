@@ -214,7 +214,7 @@ public class DelayedEventService implements Closeable {
 
         if (builder.refreshSubscriptionInterval != null) {
             long refreshInterval = checkNotShorter(
-                    builder.schedulingInterval,
+                    builder.refreshSubscriptionInterval,
                     Duration.ofMinutes(5),
                     "refresh subscription interval"
             ).toNanos();
