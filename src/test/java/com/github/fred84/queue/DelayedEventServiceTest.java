@@ -2,9 +2,11 @@ package com.github.fred84.queue;
 
 import static com.github.fred84.queue.DelayedEventService.delayedEventService;
 import static java.util.Collections.emptyMap;
+import static java.util.Collections.synchronizedList;
 import static java.util.Optional.ofNullable;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.stream.Collectors.toList;
+import static java.util.stream.Collectors.toSet;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.greaterThan;
@@ -27,10 +29,13 @@ import java.beans.ConstructorProperties;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Random;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -497,11 +502,62 @@ class DelayedEventServiceTest {
         eventService.dispatchDelayedMessages();
         waitAndAssertZsetCardinality(0L);
 
-        eventService.removeHandler(DummyEvent.class);
+        assertThat(eventService.removeHandler(DummyEvent.class), equalTo(true));
+        assertThat(eventService.removeHandler(DummyEvent.class), equalTo(false));
 
         enqueue(10);
 
         waitAndAssertZsetCardinality(10L);
+    }
+
+    @Test
+    void failedEventsDuringRefreshWouldBeHandledLater() throws InterruptedException {
+        enqueue(10);
+
+        CountDownLatch latch1 = new CountDownLatch(1);
+        CountDownLatch latch2 = new CountDownLatch(1);
+        List<String> handledIds = synchronizedList(new ArrayList<>());
+
+
+        eventService.addBlockingHandler(
+                DummyEvent.class,
+                e -> {
+                    handledIds.add(e.getId());
+                    latch1.countDown();
+                    try {
+                        latch2.await();
+                    } catch (InterruptedException ex) {
+                        throw new RuntimeException(ex);
+                    }
+                    return true;
+                },
+                1
+        );
+
+        eventService.dispatchDelayedMessages();
+
+        assertThat(latch1.await(500, MILLISECONDS), equalTo(true));
+
+        eventService.refreshSubscriptions();
+        latch2.countDown();
+
+        sleepMillis(500);
+
+        waitAndAssertZsetCardinality(10 - handledIds.size());
+
+        Set<String> unhandledIds = IntStream.range(0, 10)
+                .mapToObj(Integer::toString)
+                .filter(i -> !handledIds.contains(i))
+                .collect(toSet());
+
+
+        Set<String> leftForProcessing = connection
+                .hkeys("events")
+                .stream()
+                .filter(s -> s.contains("###")).map(s -> s.split("###")[1])
+                .collect(toSet());
+
+        assertThat(leftForProcessing, equalTo(unhandledIds));
     }
 
     @Test
