@@ -143,15 +143,18 @@ public class DelayedEventService implements Closeable {
     }
 
     private static class HandlerAndSubscription<T extends Event> {
+        private final Class<T> type;
         private final Function<T, Mono<Boolean>> handler;
         private final int parallelism;
-        private volatile Disposable subscription;
+        private final Disposable subscription;
 
         private HandlerAndSubscription(
+                Class<T> type,
                 Function<T, Mono<Boolean>> handler,
                 int parallelism,
                 Disposable subscription
         ) {
+            this.type = type;
             this.handler = handler;
             this.parallelism = parallelism;
             this.subscription = subscription;
@@ -161,7 +164,7 @@ public class DelayedEventService implements Closeable {
     private static final String DELIMITER = "###";
     private static final Logger LOG = LoggerFactory.getLogger(DelayedEventService.class);
 
-    private final Map<Class<? extends Event>, HandlerAndSubscription> subscriptions = new ConcurrentHashMap<>();
+    private final Map<Class<? extends Event>, HandlerAndSubscription<? extends Event>> subscriptions = new ConcurrentHashMap<>();
 
     private final ObjectMapper mapper;
     private final RedisClient client;
@@ -222,11 +225,7 @@ public class DelayedEventService implements Closeable {
     }
 
     void refreshSubscriptions() {
-        subscriptions.forEach((k, v) -> {
-            LOG.info("refreshing subscription for [{}]", k);
-            v.subscription.dispose();
-            v.subscription = createSubscription(k, v.handler, v.parallelism); // replace
-        });
+        subscriptions.replaceAll((k, v) -> createNewSubscription(v));
     }
 
     @NotNull
@@ -267,7 +266,7 @@ public class DelayedEventService implements Closeable {
         subscriptions.computeIfAbsent(eventType, re -> {
             InnerSubscriber<T> subscription = createSubscription(eventType, handler, parallelism);
             metrics.registerReadyToProcessSupplier(eventType, () -> metricsCommands.llen(toQueueName(eventType)));
-            return new HandlerAndSubscription<>(handler, parallelism, subscription);
+            return new HandlerAndSubscription<>(eventType, handler, parallelism, subscription);
         });
     }
 
@@ -293,6 +292,16 @@ public class DelayedEventService implements Closeable {
         metricsCommands.getStatefulConnection().close();
 
         handlerScheduler.dispose();
+    }
+
+    private <T extends Event> HandlerAndSubscription<T> createNewSubscription(HandlerAndSubscription<T> old) {
+        LOG.info("refreshing subscription for [{}]", old.type.getName());
+        return new HandlerAndSubscription<>(
+                old.type,
+                old.handler,
+                old.parallelism,
+                createSubscription(old.type, old.handler, old.parallelism)
+        );
     }
 
     Mono<TransactionResult> enqueueWithDelayInner(Event event, Duration delay) {
