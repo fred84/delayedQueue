@@ -563,8 +563,6 @@ class DelayedEventServiceTest {
 
     @Test
     void closeClientsAfterRefresh() {
-        enqueue(10);
-
         int initNumber = serviceConnectionsCount();
 
         eventService.addBlockingHandler(DummyEvent.class, e -> true, 1);
