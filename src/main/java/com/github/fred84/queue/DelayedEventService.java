@@ -225,8 +225,11 @@ public class DelayedEventService implements Closeable {
     }
 
     void refreshSubscriptions() {
-        subscriptions.forEach((key, value) -> value.subscription.dispose());
-        subscriptions.replaceAll((k, v) -> createNewSubscription(v));
+        subscriptions.replaceAll((k, v) -> {
+                    v.subscription.dispose();
+                    return createNewSubscription(v);
+                }
+        );
     }
 
     @NotNull

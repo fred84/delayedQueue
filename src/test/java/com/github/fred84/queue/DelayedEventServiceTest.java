@@ -120,7 +120,7 @@ class DelayedEventServiceTest {
     }
 
     private static class DummyEvent3 implements Event {
-        
+
         @JsonProperty
         private final String id;
 
@@ -405,9 +405,12 @@ class DelayedEventServiceTest {
                     latch.countDown();
 
                     switch ((Integer.parseInt(e.getId())) % 4) {
-                        case 0: throw new RuntimeException("no-no");
-                        case 1: return true;
-                        default: return false;
+                        case 0:
+                            throw new RuntimeException("no-no");
+                        case 1:
+                            return true;
+                        default:
+                            return false;
                     }
                 },
                 3
@@ -432,12 +435,18 @@ class DelayedEventServiceTest {
                     latch.countDown();
 
                     switch ((Integer.parseInt(e.getId())) % 5) {
-                        case 0: return Mono.just(true);
-                        case 1: return Mono.error(new RuntimeException("no-no"));
-                        case 2: return Mono.empty();
-                        case 3: return null;
-                        case 4: throw new RuntimeException("oops");
-                        default: return Mono.just(false);
+                        case 0:
+                            return Mono.just(true);
+                        case 1:
+                            return Mono.error(new RuntimeException("no-no"));
+                        case 2:
+                            return Mono.empty();
+                        case 3:
+                            return null;
+                        case 4:
+                            throw new RuntimeException("oops");
+                        default:
+                            return Mono.just(false);
                     }
                 },
                 6
@@ -565,32 +574,18 @@ class DelayedEventServiceTest {
     }
 
     @Test
-    void closeClientsAfterRefresh()  {
+    void closeClientsAfterRefresh() {
         enqueue(10);
 
-        CountDownLatch latch1 = new CountDownLatch(1);
-        CountDownLatch latch2 = new CountDownLatch(1);
-        List<String> handledIds = synchronizedList(new ArrayList<>());
-        
-        eventService.addBlockingHandler(
-                DummyEvent.class,
-                e -> {
-                    handledIds.add(e.getId());
-                    latch1.countDown();
-                    try {
-                        latch2.await();
-                    } catch (InterruptedException ex) {
-                        throw new RuntimeException(ex);
-                    }
-                    return true;
-                },
-                1
-        );
-        
-        assertConnectedClients(4);
+        int initNumber = countActiveClients();
+
+        eventService.addBlockingHandler(DummyEvent.class, e -> true, 1);
+
+        assertThat(countActiveClients() - initNumber, is(1));
         eventService.refreshSubscriptions();
         eventService.refreshSubscriptions();
-        assertConnectedClients(4);
+        eventService.refreshSubscriptions();
+        assertThat(countActiveClients() - initNumber, is(1));
     }
 
     @Test
@@ -684,7 +679,7 @@ class DelayedEventServiceTest {
         }
     }
 
-    private void assertConnectedClients(int expected) {
-        assertThat(connection.clientList().split("\\r?\\n").length, is(expected));
+    private int countActiveClients() {
+        return connection.clientList().split("\\r?\\n").length;
     }
 }

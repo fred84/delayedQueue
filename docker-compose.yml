@@ -4,11 +4,11 @@ services:
   redis:
     image: redis:4-alpine
     ports:
-     - "6379:6379"
-     
-# Use only in linux
-#  toxiproxy:
-#         image: shopify/toxiproxy
-#         ports:
-#           - "8474:8474"
-#         network_mode: "host"
+      - "6379:6379"
+
+  # works fine in Ubuntu, Mac is questionable
+  toxiproxy:
+    image: shopify/toxiproxy
+    ports:
+      - "8474:8474"
+    network_mode: "host"
