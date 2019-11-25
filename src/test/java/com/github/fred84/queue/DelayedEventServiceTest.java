@@ -559,9 +559,6 @@ class DelayedEventServiceTest {
                 .collect(toSet());
 
         assertThat(leftForProcessing, equalTo(unhandledIds));
-        eventService.refreshSubscriptions();
-        eventService.refreshSubscriptions();
-        eventService.refreshSubscriptions();
     }
 
     @Test

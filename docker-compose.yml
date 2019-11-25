@@ -6,7 +6,7 @@ services:
     ports:
       - "6379:6379"
 
-  # works fine in Ubuntu, Mac is questionable
+  # works only on linux
   toxiproxy:
     image: shopify/toxiproxy
     ports:
