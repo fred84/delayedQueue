@@ -568,15 +568,15 @@ class DelayedEventServiceTest {
     void closeClientsAfterRefresh() {
         enqueue(10);
 
-        int initNumber = countActiveClients();
+        int initNumber = serviceConnectionsCount();
 
         eventService.addBlockingHandler(DummyEvent.class, e -> true, 1);
 
-        assertThat(countActiveClients() - initNumber, is(1));
+        assertThat(serviceConnectionsCount() - initNumber, is(1));
         eventService.refreshSubscriptions();
         eventService.refreshSubscriptions();
         eventService.refreshSubscriptions();
-        assertThat(countActiveClients() - initNumber, is(1));
+        assertThat(serviceConnectionsCount() - initNumber, is(1));
     }
 
     @Test
@@ -670,7 +670,7 @@ class DelayedEventServiceTest {
         }
     }
 
-    private int countActiveClients() {
+    private int serviceConnectionsCount() {
         return connection.clientList().split("\\r?\\n").length;
     }
 }
