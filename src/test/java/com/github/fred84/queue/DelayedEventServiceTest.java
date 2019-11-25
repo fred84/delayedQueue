@@ -10,6 +10,7 @@ import static java.util.stream.Collectors.toSet;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.greaterThan;
+import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -119,7 +120,7 @@ class DelayedEventServiceTest {
     }
 
     private static class DummyEvent3 implements Event {
-        
+
         @JsonProperty
         private final String id;
 
@@ -561,6 +562,19 @@ class DelayedEventServiceTest {
     }
 
     @Test
+    void closeClientsAfterRefresh() {
+        int initNumber = serviceConnectionsCount();
+
+        eventService.addBlockingHandler(DummyEvent.class, e -> true, 1);
+
+        assertThat(serviceConnectionsCount() - initNumber, is(1));
+        eventService.refreshSubscriptions();
+        eventService.refreshSubscriptions();
+        eventService.refreshSubscriptions();
+        assertThat(serviceConnectionsCount() - initNumber, is(1));
+    }
+
+    @Test
     void enqueueNulls() {
         assertThrows(NullPointerException.class, () -> eventService.enqueueWithDelay(new DummyEvent("1"), null));
         assertThrows(NullPointerException.class, () -> eventService.enqueueWithDelay(null, Duration.ZERO));
@@ -649,5 +663,9 @@ class DelayedEventServiceTest {
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    private int serviceConnectionsCount() {
+        return connection.clientList().split("\\r?\\n").length;
     }
 }
