@@ -10,6 +10,7 @@ import static java.util.stream.Collectors.toSet;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.greaterThan;
+import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -558,6 +559,38 @@ class DelayedEventServiceTest {
                 .collect(toSet());
 
         assertThat(leftForProcessing, equalTo(unhandledIds));
+        eventService.refreshSubscriptions();
+        eventService.refreshSubscriptions();
+        eventService.refreshSubscriptions();
+    }
+
+    @Test
+    void closeClientsAfterRefresh()  {
+        enqueue(10);
+
+        CountDownLatch latch1 = new CountDownLatch(1);
+        CountDownLatch latch2 = new CountDownLatch(1);
+        List<String> handledIds = synchronizedList(new ArrayList<>());
+        
+        eventService.addBlockingHandler(
+                DummyEvent.class,
+                e -> {
+                    handledIds.add(e.getId());
+                    latch1.countDown();
+                    try {
+                        latch2.await();
+                    } catch (InterruptedException ex) {
+                        throw new RuntimeException(ex);
+                    }
+                    return true;
+                },
+                1
+        );
+        
+        assertConnectedClients(4);
+        eventService.refreshSubscriptions();
+        eventService.refreshSubscriptions();
+        assertConnectedClients(4);
     }
 
     @Test
@@ -649,5 +682,9 @@ class DelayedEventServiceTest {
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    private void assertConnectedClients(int expected) {
+        assertThat(connection.clientList().split("\\r?\\n").length, is(expected));
     }
 }
