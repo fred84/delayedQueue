@@ -189,6 +189,8 @@ class DelayedEventServiceTest {
 
         connection = redisClient.connect().sync();
         connection.flushall();
+
+        MDC.clear();
     }
 
     @AfterEach
@@ -260,6 +262,40 @@ class DelayedEventServiceTest {
                     collector.put(e.getId(), MDC.get("key"));
                     latch.countDown();
                     return true;
+                },
+                1
+        );
+
+        enqueue(3, id -> {
+            String str = Integer.toString(id);
+            MDC.put("key", str);
+            return new DummyEvent(str);
+        });
+
+        eventService.dispatchDelayedMessages();
+
+        latch.await(500, MILLISECONDS);
+
+        Map<String, String> expected = new HashMap<>();
+        expected.put("0", "0");
+        expected.put("1", "1");
+        expected.put("2", "2");
+
+        assertThat(collector, equalTo(expected));
+    }
+
+    @Test
+    void verifyLogContextNonBlocking() throws InterruptedException {
+        Map<String, String> collector = new ConcurrentHashMap<>();
+
+        CountDownLatch latch = new CountDownLatch(3);
+
+        eventService.addHandler(
+                DummyEvent.class,
+                e -> {
+                    collector.put(e.getId(), MDC.get("key"));
+                    latch.countDown();
+                    return Mono.just(true);
                 },
                 1
         );
@@ -567,10 +603,15 @@ class DelayedEventServiceTest {
 
         eventService.addBlockingHandler(DummyEvent.class, e -> true, 1);
 
+        sleepMillis(100);
+
         assertThat(serviceConnectionsCount() - initNumber, is(1));
         eventService.refreshSubscriptions();
         eventService.refreshSubscriptions();
         eventService.refreshSubscriptions();
+
+        sleepMillis(100);
+
         assertThat(serviceConnectionsCount() - initNumber, is(1));
     }
 

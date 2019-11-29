@@ -15,7 +15,7 @@ public class MDCLogContext implements LogContext {
 
     @Override
     public void set(Map<String, String> context) {
-        if (context != null && !context.isEmpty()) {
+        if (context != null) {
             MDC.setContextMap(context);
         }
     }
