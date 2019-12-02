@@ -5,6 +5,7 @@ import static java.lang.Boolean.TRUE;
 import com.github.fred84.queue.logging.LogContext;
 import io.lettuce.core.TransactionResult;
 import io.lettuce.core.api.StatefulRedisConnection;
+import java.util.Map;
 import java.util.function.Function;
 import org.reactivestreams.Subscription;
 import org.slf4j.Logger;
@@ -51,9 +52,13 @@ class InnerSubscriber<T extends Event> extends BaseSubscriber<EventEnvelope<T>> 
 
         Mono<Boolean> promise;
 
+        Map<String, String> originalLogContext = logContext.get();
         try {
+            logContext.set(envelope.getLogContext());
             promise = handler.apply(envelope.getPayload());
+            logContext.set(originalLogContext);
         } catch (Exception e) {
+            logContext.set(originalLogContext);
             LOG.info("error in non-blocking handler for [{}]", envelope.getType(), e);
             requestInner(1);
             return;
