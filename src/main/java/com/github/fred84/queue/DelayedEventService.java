@@ -275,6 +275,10 @@ public class DelayedEventService implements Closeable {
         });
     }
 
+    /**
+     * Deprecated in favor of "enqueueWithDelayNonBlocking"
+     */
+    @Deprecated
     public void enqueueWithDelay(@NotNull Event event, @NotNull Duration delay) {
         enqueueWithDelayNonBlocking(event, delay).block(BLOCK_DURATION);
     }
