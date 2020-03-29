@@ -351,11 +351,10 @@ class DelayedEventServiceTest {
         Flux.merge(IntStream
                 .range(0, 50)
                 .parallel()
-                .mapToObj(id -> eventService.enqueueWithDelayInner(new DummyEvent(Integer.toString(id)), Duration.ZERO))
+                .mapToObj(id -> eventService.enqueueWithDelayNonBlocking(new DummyEvent(Integer.toString(id)), Duration.ZERO))
                 .collect(toList())
         )
-                .collectList()
-                .block();
+            .blockLast();
 
         assertZsetCardinality(50L);
     }
@@ -492,7 +491,7 @@ class DelayedEventServiceTest {
     void dispatch() {
         DummyEvent event = new DummyEvent("99");
 
-        eventService.enqueueWithDelayInner(event, Duration.ZERO).block();
+        eventService.enqueueWithDelay(event, Duration.ZERO);
 
         double score = connection.zscore(DELAYED_QUEUE, DelayedEventService.getKey(event));
 
@@ -524,8 +523,8 @@ class DelayedEventServiceTest {
     void duplicateItems() {
         DummyEvent event = new DummyEvent("1");
 
-        eventService.enqueueWithDelayInner(event, Duration.ZERO).block();
-        eventService.enqueueWithDelayInner(event, Duration.ZERO).block();
+        eventService.enqueueWithDelay(event, Duration.ZERO);
+        eventService.enqueueWithDelay(event, Duration.ZERO);
 
         assertZsetCardinality(1L);
     }
@@ -667,9 +666,9 @@ class DelayedEventServiceTest {
 
     private void enqueue(IntStream stream, Function<Integer, Event> transformer) {
         Flux
-                .merge(stream.mapToObj(id -> eventService.enqueueWithDelayInner(transformer.apply(id), Duration.ZERO)).collect(toList()))
-                .collectList()
-                .block();
+            .fromStream(stream::boxed)
+            .flatMap(id -> eventService.enqueueWithDelayNonBlocking(transformer.apply(id), Duration.ZERO))
+            .blockLast();
     }
 
     private String toQueueName(Class<? extends Event> cls) {

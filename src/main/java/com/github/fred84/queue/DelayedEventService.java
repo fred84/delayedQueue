@@ -163,6 +163,7 @@ public class DelayedEventService implements Closeable {
 
     private static final String DELIMITER = "###";
     private static final Logger LOG = LoggerFactory.getLogger(DelayedEventService.class);
+    private static final Duration BLOCK_DURATION = Duration.ofSeconds(1);
 
     private final Map<Class<? extends Event>, HandlerAndSubscription<? extends Event>> subscriptions = new ConcurrentHashMap<>();
 
@@ -275,11 +276,15 @@ public class DelayedEventService implements Closeable {
     }
 
     public void enqueueWithDelay(@NotNull Event event, @NotNull Duration delay) {
+        enqueueWithDelayNonBlocking(event, delay).block(BLOCK_DURATION);
+    }
+
+    public Mono<Void> enqueueWithDelayNonBlocking(@NotNull Event event, @NotNull Duration delay) {
         requireNonNull(event, "event");
         requireNonNull(delay, "delay");
         requireNonNull(event.getId(), "event id");
 
-        enqueueWithDelayInner(event, delay).subscribe();
+        return enqueueWithDelayInner(event, delay).then();
     }
 
     @Override
@@ -308,7 +313,7 @@ public class DelayedEventService implements Closeable {
         );
     }
 
-    Mono<TransactionResult> enqueueWithDelayInner(Event event, Duration delay) {
+    private Mono<TransactionResult> enqueueWithDelayInner(Event event, Duration delay) {
         Map<String, String> context = logContext.get();
 
         return executeInTransaction(() -> {
