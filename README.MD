@@ -72,6 +72,12 @@ eventService.addBlockingHandler(DummyEvent.class, e -> true, 1);
 eventService.enqueueWithDelay(new DummyEvent("1"), Duration.ofHours(1));
 ```
 
+or 
+
+```java
+eventService.enqueueWithDelayNonBlocking(new DummyEvent("1"), Duration.ofHours(1)).subscribe(...);
+```
+
 ### Close service
 
 ```java
