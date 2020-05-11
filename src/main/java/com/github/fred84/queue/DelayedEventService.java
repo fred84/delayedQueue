@@ -287,7 +287,11 @@ public class DelayedEventService implements Closeable {
         return enqueueWithDelayNonBlocking(event, delay, contextHandler.getDefault()).then();
     }
 
-    public Mono<Void> enqueueWithDelayNonBlocking(@NotNull Event event, @NotNull Duration delay, @NotNull Map<String, String> eventContext) {
+    public Mono<Void> enqueueWithDelayNonBlocking(
+            @NotNull Event event,
+            @NotNull Duration delay,
+            @NotNull Map<String, String> eventContext
+    ) {
         requireNonNull(event, "event");
         requireNonNull(delay, "delay");
         requireNonNull(eventContext, "event context");

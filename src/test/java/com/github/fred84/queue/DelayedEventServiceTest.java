@@ -289,7 +289,7 @@ class DelayedEventServiceTest {
     void verifySubscriberContext() throws InterruptedException {
         Map<String, String> collector = new ConcurrentHashMap<>();
 
-        CountDownLatch latch = new CountDownLatch(3);
+        final CountDownLatch latch = new CountDownLatch(3);
 
         eventService.addHandler(
                 DummyEvent.class,
@@ -298,6 +298,7 @@ class DelayedEventServiceTest {
                         .doOnNext(ctx -> {
                             Map<String, String> eventCtx = ctx.get("eventContext");
                             collector.put(e.getId(), eventCtx.get("key"));
+                            latch.countDown();
                         })
                         .thenReturn(true),
                 1
@@ -334,6 +335,7 @@ class DelayedEventServiceTest {
                         .doOnNext(ctx -> {
                             Map<String, String> eventCtx = ctx.get("eventContext");
                             collector.put(e.getId(), eventCtx.get("key"));
+                            latch.countDown();
                         })
                         .thenReturn(true),
                 1
