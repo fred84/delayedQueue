@@ -91,6 +91,7 @@ eventService.enqueueWithDelayNonBlocking(new DummyEvent("1"), Duration.ofHours(1
 ### 0.3.5
 
 - support for reactor subscriber context added
+- `LogContext` interface has changed, custom implementations should be updated
 
 ### 0.3.4
 
