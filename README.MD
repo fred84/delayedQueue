@@ -27,7 +27,7 @@ repositories {
 
 ```groovy
 dependencies {
-    implementation 'com.github.fred84:delayedQueue:0.2'
+    implementation 'com.github.fred84:delayedQueue:0.3.5'
 }
 ```
 
@@ -69,12 +69,6 @@ eventService.addBlockingHandler(DummyEvent.class, e -> true, 1);
 ### Enqueue event
 
 ```java
-eventService.enqueueWithDelay(new DummyEvent("1"), Duration.ofHours(1));
-```
-
-or 
-
-```java
 eventService.enqueueWithDelayNonBlocking(new DummyEvent("1"), Duration.ofHours(1)).subscribe(...);
 ```
 
@@ -83,6 +77,37 @@ eventService.enqueueWithDelayNonBlocking(new DummyEvent("1"), Duration.ofHours(1
 ```java
 eventService.close();
 ```
+
+### Event context
+
+```java
+eventService.addHandler(DummyEvent.class, e -> Mono.subscriberContext().doOnNext(ctx -> { ... }).thenReturn(true), 1);
+
+eventService.enqueueWithDelayNonBlocking(new DummyEvent("1"), Duration.ofHours(1), Map.of("a", "b")).subscribe(...);
+```
+
+## Changelog
+
+### 0.3.5
+
+- support for reactor subscriber context added
+
+### 0.3.4
+
+- the `enqueueWithDelay` method is now blocking
+- the `enqueueWithDelayNonBlocking` method added as non-blocking counterpart
+
+### 0.3.3
+
+- fixes for MDC logging context
+
+### 0.3.2
+
+- fix undisposed old subscriptions after a refresh
+
+### 0.3
+
+- a periodic refresh for subscriptions
 
 ## Contribution
 

@@ -180,7 +180,7 @@ public class DelayedEventService implements Closeable {
     private final Scheduler single = Schedulers.newSingle("redis-single");
     private final ScheduledThreadPoolExecutor dispatcherExecutor = new ScheduledThreadPoolExecutor(1);
     private final Metrics metrics;
-    private final LogContext logContext;
+    private final LogContext contextHandler;
     private final String dataSetPrefix;
     private final Limit schedulingBatchSize;
 
@@ -191,7 +191,7 @@ public class DelayedEventService implements Closeable {
     private DelayedEventService(Builder builder) {
         mapper = requireNonNull(builder.mapper, "object mapper");
         client = requireNonNull(builder.client, "redis client");
-        logContext = requireNonNull(builder.logContext, "log context");
+        contextHandler = requireNonNull(builder.logContext, "event context handler");
         pollingTimeout = checkNotShorter(builder.pollingTimeout, Duration.ofMillis(50), "polling interval");
         lockTimeout = Duration.ofSeconds(2);
         retryAttempts = checkInRange(builder.retryAttempts, 1, 100, "retry attempts");
@@ -284,11 +284,16 @@ public class DelayedEventService implements Closeable {
     }
 
     public Mono<Void> enqueueWithDelayNonBlocking(@NotNull Event event, @NotNull Duration delay) {
+        return enqueueWithDelayNonBlocking(event, delay, contextHandler.getDefault()).then();
+    }
+
+    public Mono<Void> enqueueWithDelayNonBlocking(@NotNull Event event, @NotNull Duration delay, @NotNull Map<String, String> eventContext) {
         requireNonNull(event, "event");
         requireNonNull(delay, "delay");
+        requireNonNull(eventContext, "event context");
         requireNonNull(event.getId(), "event id");
 
-        return enqueueWithDelayInner(event, delay).then();
+        return enqueueWithDelayInner(event, delay, eventContext).then();
     }
 
     @Override
@@ -317,9 +322,7 @@ public class DelayedEventService implements Closeable {
         );
     }
 
-    private Mono<TransactionResult> enqueueWithDelayInner(Event event, Duration delay) {
-        Map<String, String> context = logContext.get();
-
+    private Mono<TransactionResult> enqueueWithDelayInner(Event event, Duration delay, Map<String, String> context) {
         return executeInTransaction(() -> {
             String key = getKey(event);
             String rawEnvelope = serialize(EventEnvelope.create(event, context));
@@ -368,7 +371,7 @@ public class DelayedEventService implements Closeable {
     ) {
         StatefulRedisConnection<String, String> pollingConnection = client.connect();
         InnerSubscriber<T> subscription = new InnerSubscriber<>(
-                logContext,
+                contextHandler,
                 handler,
                 parallelism,
                 pollingConnection,

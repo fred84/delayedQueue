@@ -2,6 +2,7 @@ package com.github.fred84.queue;
 
 import static com.github.fred84.queue.DelayedEventService.delayedEventService;
 import static java.util.Collections.emptyMap;
+import static java.util.Collections.singletonMap;
 import static java.util.Collections.synchronizedList;
 import static java.util.Optional.ofNullable;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
@@ -282,6 +283,70 @@ class DelayedEventServiceTest {
         expected.put("2", "2");
 
         assertThat(collector, equalTo(expected));
+    }
+
+    @Test
+    void verifySubscriberContext() throws InterruptedException {
+        Map<String, String> collector = new ConcurrentHashMap<>();
+
+        CountDownLatch latch = new CountDownLatch(3);
+
+        eventService.addHandler(
+                DummyEvent.class,
+                e -> Mono
+                        .subscriberContext()
+                        .doOnNext(ctx -> {
+                            Map<String, String> eventCtx = ctx.get("eventContext");
+                            collector.put(e.getId(), eventCtx.get("key"));
+                        })
+                        .thenReturn(true),
+                1
+        );
+
+        enqueue(3, id -> {
+            String str = Integer.toString(id);
+            MDC.put("key", str);
+            return new DummyEvent(str);
+        });
+
+        eventService.dispatchDelayedMessages();
+
+        latch.await(500, MILLISECONDS);
+
+        Map<String, String> expected = new HashMap<>();
+        expected.put("0", "0");
+        expected.put("1", "1");
+        expected.put("2", "2");
+
+        assertThat(collector, equalTo(expected));
+    }
+
+    @Test
+    void verifyUserSpecifiedSubscriberContext() throws InterruptedException {
+        Map<String, String> collector = new ConcurrentHashMap<>();
+
+        CountDownLatch latch = new CountDownLatch(3);
+
+        eventService.addHandler(
+                DummyEvent.class,
+                e -> Mono
+                        .subscriberContext()
+                        .doOnNext(ctx -> {
+                            Map<String, String> eventCtx = ctx.get("eventContext");
+                            collector.put(e.getId(), eventCtx.get("key"));
+                        })
+                        .thenReturn(true),
+                1
+        );
+
+        Map<String, String> context = singletonMap("key", "abc");
+        eventService.enqueueWithDelayNonBlocking(new DummyEvent("1"), Duration.ZERO, context).block();
+
+        eventService.dispatchDelayedMessages();
+
+        latch.await(500, MILLISECONDS);
+
+        assertThat(collector, equalTo(singletonMap("1", "abc")));
     }
 
     @Test
