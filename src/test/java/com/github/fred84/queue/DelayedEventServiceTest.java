@@ -17,7 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.github.fred84.queue.logging.MDCLogContext;
+import com.github.fred84.queue.logging.DefaultEventContextHandler;
 import eu.rekawek.toxiproxy.Proxy;
 import eu.rekawek.toxiproxy.ToxiproxyClient;
 import io.lettuce.core.ClientOptions;
@@ -183,7 +183,7 @@ class DelayedEventServiceTest {
                 .threadPoolForHandlers(executor)
                 .enableScheduling(false)
                 .pollingTimeout(POLLING_TIMEOUT)
-                .logContext(new MDCLogContext())
+                .logContext(new DefaultEventContextHandler())
                 .dataSetPrefix("")
                 .schedulingBatchSize(50)
                 .build();
@@ -212,7 +212,7 @@ class DelayedEventServiceTest {
                 default:
                     return new DummyEvent(str);
             }
-        });
+        }).block();
 
         CountDownLatch latch = new CountDownLatch(30);
 
@@ -231,7 +231,7 @@ class DelayedEventServiceTest {
 
     @Test
     void backPressureIsApplied() {
-        enqueue(10);
+        enqueue(10).block();
 
         assertThat(connection.zcard(DELAYED_QUEUE), equalTo(10L));
 
@@ -252,11 +252,9 @@ class DelayedEventServiceTest {
     }
 
     @Test
-    void verifyLogContext() throws InterruptedException {
+    void verifyEventContextForBlockingHandler() throws InterruptedException {
         Map<String, String> collector = new ConcurrentHashMap<>();
-
-        CountDownLatch latch = new CountDownLatch(3);
-
+        CountDownLatch latch = new CountDownLatch(1);
         eventService.addBlockingHandler(
                 DummyEvent.class,
                 e -> {
@@ -267,122 +265,33 @@ class DelayedEventServiceTest {
                 1
         );
 
-        enqueue(3, id -> {
-            String str = Integer.toString(id);
-            MDC.put("key", str);
-            return new DummyEvent(str);
-        });
-
+        enqueue(1).subscriberContext(ctx -> ctx.put("eventContext", singletonMap("key", "value"))).block();
         eventService.dispatchDelayedMessages();
-
         latch.await(500, MILLISECONDS);
 
-        Map<String, String> expected = new HashMap<>();
-        expected.put("0", "0");
-        expected.put("1", "1");
-        expected.put("2", "2");
-
-        assertThat(collector, equalTo(expected));
+        assertThat(collector, equalTo(singletonMap("0", "value")));
     }
 
     @Test
-    void verifySubscriberContext() throws InterruptedException {
+    void verifyEventContextForNonBlockingHandler() throws InterruptedException {
         Map<String, String> collector = new ConcurrentHashMap<>();
-
-        final CountDownLatch latch = new CountDownLatch(3);
-
+        CountDownLatch latch = new CountDownLatch(1);
         eventService.addHandler(
                 DummyEvent.class,
-                e -> Mono
-                        .subscriberContext()
-                        .doOnNext(ctx -> {
-                            Map<String, String> eventCtx = ctx.get("eventContext");
-                            collector.put(e.getId(), eventCtx.get("key"));
-                            latch.countDown();
-                        })
-                        .thenReturn(true),
-                1
-        );
-
-        enqueue(3, id -> {
-            String str = Integer.toString(id);
-            MDC.put("key", str);
-            return new DummyEvent(str);
-        });
-
-        eventService.dispatchDelayedMessages();
-
-        latch.await(500, MILLISECONDS);
-
-        Map<String, String> expected = new HashMap<>();
-        expected.put("0", "0");
-        expected.put("1", "1");
-        expected.put("2", "2");
-
-        assertThat(collector, equalTo(expected));
-    }
-
-    @Test
-    void verifyUserSpecifiedSubscriberContext() throws InterruptedException {
-        Map<String, String> collector = new ConcurrentHashMap<>();
-
-        CountDownLatch latch = new CountDownLatch(3);
-
-        eventService.addHandler(
-                DummyEvent.class,
-                e -> Mono
-                        .subscriberContext()
-                        .doOnNext(ctx -> {
-                            Map<String, String> eventCtx = ctx.get("eventContext");
-                            collector.put(e.getId(), eventCtx.get("key"));
-                            latch.countDown();
-                        })
-                        .thenReturn(true),
-                1
-        );
-
-        Map<String, String> context = singletonMap("key", "abc");
-        eventService.enqueueWithDelayNonBlocking(new DummyEvent("1"), Duration.ZERO, context).block();
-
-        eventService.dispatchDelayedMessages();
-
-        latch.await(500, MILLISECONDS);
-
-        assertThat(collector, equalTo(singletonMap("1", "abc")));
-    }
-
-    @Test
-    void verifyLogContextNonBlocking() throws InterruptedException {
-        Map<String, String> collector = new ConcurrentHashMap<>();
-
-        CountDownLatch latch = new CountDownLatch(3);
-
-        eventService.addHandler(
-                DummyEvent.class,
-                e -> {
-                    collector.put(e.getId(), MDC.get("key"));
+                e -> Mono.subscriberContext().map(ctx -> {
+                    Map<String, String> eventContext = ctx.get("eventContext");
+                    collector.put(e.getId(), eventContext.get("key"));
                     latch.countDown();
-                    return Mono.just(true);
-                },
+                    return true;
+                }),
                 1
         );
 
-        enqueue(3, id -> {
-            String str = Integer.toString(id);
-            MDC.put("key", str);
-            return new DummyEvent(str);
-        });
-
+        enqueue(1).subscriberContext(ctx -> ctx.put("eventContext", singletonMap("key", "value"))).block();
         eventService.dispatchDelayedMessages();
-
         latch.await(500, MILLISECONDS);
 
-        Map<String, String> expected = new HashMap<>();
-        expected.put("0", "0");
-        expected.put("1", "1");
-        expected.put("2", "2");
-
-        assertThat(collector, equalTo(expected));
+        assertThat(collector, equalTo(singletonMap("0", "value")));
     }
 
     @Test
@@ -403,7 +312,7 @@ class DelayedEventServiceTest {
                 10
         );
 
-        enqueue(20);
+        enqueue(20).block();
 
         eventService.dispatchDelayedMessages();
 
@@ -430,12 +339,12 @@ class DelayedEventServiceTest {
     void handleDeserializationError() throws InterruptedException {
         final CountDownLatch latch = new CountDownLatch(20);
 
-        enqueue(IntStream.range(0, 10));
+        enqueue(IntStream.range(0, 10)).block();
         eventService.dispatchDelayedMessages();
 
         connection.lpush(toQueueName(DummyEvent.class), "[unserializable}");
 
-        enqueue(IntStream.range(11, 20));
+        enqueue(IntStream.range(11, 20)).block();
         eventService.dispatchDelayedMessages();
 
         eventService.addBlockingHandler(
@@ -462,7 +371,7 @@ class DelayedEventServiceTest {
 
         redisProxy = createRedisProxy();
 
-        enqueue(1);
+        enqueue(1).block();
         assertZsetCardinality(1L);
 
         eventService.dispatchDelayedMessages();
@@ -476,7 +385,7 @@ class DelayedEventServiceTest {
 
         MILLISECONDS.sleep(POLLING_TIMEOUT.toMillis() + 100);
 
-        enqueue(1);
+        enqueue(1).block();
         assertZsetCardinality(1L);
         eventService.dispatchDelayedMessages();
 
@@ -515,7 +424,7 @@ class DelayedEventServiceTest {
                 3
         );
 
-        enqueue(5);
+        enqueue(5).block();
 
         latch.await(500, MILLISECONDS);
 
@@ -545,7 +454,7 @@ class DelayedEventServiceTest {
                 6
         );
 
-        enqueue(6);
+        enqueue(6).block();
 
         latch.await(500, MILLISECONDS);
 
@@ -575,7 +484,7 @@ class DelayedEventServiceTest {
 
     @Test
     void dispatchLimit() {
-        enqueue(70);
+        enqueue(70).block();
 
         assertThat(connection.zcard(DELAYED_QUEUE), equalTo(70L));
 
@@ -598,7 +507,7 @@ class DelayedEventServiceTest {
 
     @Test
     void removeHandler() {
-        enqueue(10);
+        enqueue(10).block();
 
         eventService.addBlockingHandler(DummyEvent.class, e -> true, 1);
 
@@ -608,14 +517,14 @@ class DelayedEventServiceTest {
         assertThat(eventService.removeHandler(DummyEvent.class), equalTo(true));
         assertThat(eventService.removeHandler(DummyEvent.class), equalTo(false));
 
-        enqueue(10);
+        enqueue(10).block();
 
         waitAndAssertZsetCardinality(10L);
     }
 
     @Test
     void failedEventsDuringRefreshWouldBeHandledLater() throws InterruptedException {
-        enqueue(10);
+        enqueue(10).block();
 
         CountDownLatch latch1 = new CountDownLatch(1);
         CountDownLatch latch2 = new CountDownLatch(1);
@@ -719,23 +628,23 @@ class DelayedEventServiceTest {
         return toxiProxyClient.createProxy("redis", TOXIPROXY_IP + ":63790", "localhost:6379");
     }
 
-    private void enqueue(int num) {
-        enqueue(IntStream.range(0, num));
+    private Mono<Void> enqueue(int num) {
+        return enqueue(IntStream.range(0, num));
     }
 
-    private void enqueue(int num, Function<Integer, Event> transformer) {
-        enqueue(IntStream.range(0, num), transformer);
+    private Mono<Void> enqueue(int num, Function<Integer, Event> transformer) {
+        return enqueue(IntStream.range(0, num), transformer);
     }
 
-    private void enqueue(IntStream stream) {
-        enqueue(stream, id -> new DummyEvent(Integer.toString(id)));
+    private Mono<Void> enqueue(IntStream stream) {
+        return enqueue(stream, id -> new DummyEvent(Integer.toString(id)));
     }
 
-    private void enqueue(IntStream stream, Function<Integer, Event> transformer) {
-        Flux
+    private Mono<Void> enqueue(IntStream stream, Function<Integer, Event> transformer) {
+        return Flux
             .fromStream(stream::boxed)
             .flatMap(id -> eventService.enqueueWithDelayNonBlocking(transformer.apply(id), Duration.ZERO))
-            .blockLast();
+            .then();
     }
 
     private String toQueueName(Class<? extends Event> cls) {

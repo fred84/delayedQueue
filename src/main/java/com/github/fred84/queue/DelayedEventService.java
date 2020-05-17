@@ -8,8 +8,8 @@ import static java.util.concurrent.TimeUnit.NANOSECONDS;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.github.fred84.queue.logging.LogContext;
-import com.github.fred84.queue.logging.NoopLogContext;
+import com.github.fred84.queue.logging.EventContextHandler;
+import com.github.fred84.queue.logging.NoopEventContextHandler;
 import com.github.fred84.queue.metrics.Metrics;
 import com.github.fred84.queue.metrics.NoopMetrics;
 import io.lettuce.core.KeyValue;
@@ -57,7 +57,7 @@ public class DelayedEventService implements Closeable {
         private ExecutorService threadPoolForHandlers = Executors.newFixedThreadPool(5);
         private int retryAttempts = 70;
         private Metrics metrics = new NoopMetrics();
-        private LogContext logContext = new NoopLogContext();
+        private EventContextHandler eventContextHandler = new NoopEventContextHandler();
         private String dataSetPrefix = "de_";
         private Duration refreshSubscriptionInterval;
 
@@ -113,8 +113,8 @@ public class DelayedEventService implements Closeable {
         }
 
         @NotNull
-        public Builder logContext(@NotNull LogContext val) {
-            logContext = val;
+        public Builder logContext(@NotNull EventContextHandler val) {
+            eventContextHandler = val;
             return this;
         }
 
@@ -180,7 +180,7 @@ public class DelayedEventService implements Closeable {
     private final Scheduler single = Schedulers.newSingle("redis-single");
     private final ScheduledThreadPoolExecutor dispatcherExecutor = new ScheduledThreadPoolExecutor(1);
     private final Metrics metrics;
-    private final LogContext contextHandler;
+    private final EventContextHandler contextHandler;
     private final String dataSetPrefix;
     private final Limit schedulingBatchSize;
 
@@ -191,7 +191,7 @@ public class DelayedEventService implements Closeable {
     private DelayedEventService(Builder builder) {
         mapper = requireNonNull(builder.mapper, "object mapper");
         client = requireNonNull(builder.client, "redis client");
-        contextHandler = requireNonNull(builder.logContext, "event context handler");
+        contextHandler = requireNonNull(builder.eventContextHandler, "event context handler");
         pollingTimeout = checkNotShorter(builder.pollingTimeout, Duration.ofMillis(50), "polling interval");
         lockTimeout = Duration.ofSeconds(2);
         retryAttempts = checkInRange(builder.retryAttempts, 1, 100, "retry attempts");
@@ -256,7 +256,7 @@ public class DelayedEventService implements Closeable {
     ) {
         requireNonNull(handler, "handler");
 
-        addHandler(eventType, new BlockingSubscriber<>(handler), parallelism);
+        addHandler(eventType, new BlockingSubscriber<>(handler, contextHandler), parallelism);
     }
 
     public <T extends Event> void addHandler(
@@ -280,24 +280,19 @@ public class DelayedEventService implements Closeable {
      */
     @Deprecated
     public void enqueueWithDelay(@NotNull Event event, @NotNull Duration delay) {
-        enqueueWithDelayNonBlocking(event, delay).block(BLOCK_DURATION);
+        enqueueWithDelayNonBlocking(event, delay).block(BLOCK_DURATION); // todo here context
     }
 
     public Mono<Void> enqueueWithDelayNonBlocking(@NotNull Event event, @NotNull Duration delay) {
-        return enqueueWithDelayNonBlocking(event, delay, contextHandler.getDefault()).then();
-    }
-
-    public Mono<Void> enqueueWithDelayNonBlocking(
-            @NotNull Event event,
-            @NotNull Duration delay,
-            @NotNull Map<String, String> eventContext
-    ) {
         requireNonNull(event, "event");
         requireNonNull(delay, "delay");
-        requireNonNull(eventContext, "event context");
         requireNonNull(event.getId(), "event id");
 
-        return enqueueWithDelayInner(event, delay, eventContext).then();
+        return Mono.subscriberContext()
+                .flatMap(ctx -> enqueueWithDelayInner(event, delay, contextHandler.eventContext(ctx)))
+                .then();
+
+
     }
 
     @Override
