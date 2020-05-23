@@ -14,6 +14,4 @@ public interface EventContextHandler {
      * Add an event context to a subscription context before passing an event to a handler
      */
     Context subscriptionContext(Context originalSubscriptionContext, Map<String, String> eventContext);
-
-    void applyToMDC(Context subscriptionContext);
 }

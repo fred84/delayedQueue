@@ -34,7 +34,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.function.Function;
-import java.util.function.Predicate;
 import javax.annotation.PreDestroy;
 import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
@@ -113,7 +112,7 @@ public class DelayedEventService implements Closeable {
         }
 
         @NotNull
-        public Builder logContext(@NotNull EventContextHandler val) {
+        public Builder eventContextHandler(@NotNull EventContextHandler val) {
             eventContextHandler = val;
             return this;
         }
@@ -249,16 +248,6 @@ public class DelayedEventService implements Closeable {
         return false;
     }
 
-    public <T extends Event> void addBlockingHandler(
-            @NotNull Class<T> eventType,
-            @NotNull Predicate<@NotNull T> handler,
-            int parallelism
-    ) {
-        requireNonNull(handler, "handler");
-
-        addHandler(eventType, new BlockingSubscriber<>(handler, contextHandler), parallelism);
-    }
-
     public <T extends Event> void addHandler(
             @NotNull Class<T> eventType,
             @NotNull Function<@NotNull T, @NotNull Mono<Boolean>> handler,
@@ -275,14 +264,6 @@ public class DelayedEventService implements Closeable {
         });
     }
 
-    /**
-     * Deprecated in favor of "enqueueWithDelayNonBlocking"
-     */
-    @Deprecated
-    public void enqueueWithDelay(@NotNull Event event, @NotNull Duration delay) {
-        enqueueWithDelayNonBlocking(event, delay).block(BLOCK_DURATION); // todo here context
-    }
-
     public Mono<Void> enqueueWithDelayNonBlocking(@NotNull Event event, @NotNull Duration delay) {
         requireNonNull(event, "event");
         requireNonNull(delay, "delay");
@@ -291,8 +272,6 @@ public class DelayedEventService implements Closeable {
         return Mono.subscriberContext()
                 .flatMap(ctx -> enqueueWithDelayInner(event, delay, contextHandler.eventContext(ctx)))
                 .then();
-
-
     }
 
     @Override

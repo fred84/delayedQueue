@@ -16,9 +16,4 @@ public final class NoopEventContextHandler implements EventContextHandler {
     public Context subscriptionContext(Context originalSubscriptionContext, Map<String, String> eventContext) {
         return originalSubscriptionContext;
     }
-
-    @Override
-    public void applyToMDC(Context subscriptionContext) {
-        // no-op
-    }
 }
