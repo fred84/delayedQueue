@@ -1,4 +1,4 @@
-package com.github.fred84.queue.logging;
+package com.github.fred84.queue.context;
 
 import java.util.Map;
 import reactor.util.context.Context;

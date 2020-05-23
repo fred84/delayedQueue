@@ -8,8 +8,8 @@ import static java.util.concurrent.TimeUnit.NANOSECONDS;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.github.fred84.queue.logging.EventContextHandler;
-import com.github.fred84.queue.logging.NoopEventContextHandler;
+import com.github.fred84.queue.context.EventContextHandler;
+import com.github.fred84.queue.context.NoopEventContextHandler;
 import com.github.fred84.queue.metrics.Metrics;
 import com.github.fred84.queue.metrics.NoopMetrics;
 import io.lettuce.core.KeyValue;
@@ -30,8 +30,6 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.function.Function;
 import javax.annotation.PreDestroy;
@@ -47,13 +45,14 @@ import reactor.core.scheduler.Schedulers;
 public class DelayedEventService implements Closeable {
 
     public static final class Builder {
-        private ObjectMapper mapper = new ObjectMapper();
         private RedisClient client;
+
+        private ObjectMapper mapper = new ObjectMapper();
         private Duration pollingTimeout = Duration.ofSeconds(1);
         private boolean enableScheduling = true;
         private Duration schedulingInterval = Duration.ofMillis(500);
         private int schedulingBatchSize = 100;
-        private ExecutorService threadPoolForHandlers = Executors.newFixedThreadPool(5);
+        private Scheduler scheduler = Schedulers.elastic();
         private int retryAttempts = 70;
         private Metrics metrics = new NoopMetrics();
         private EventContextHandler eventContextHandler = new NoopEventContextHandler();
@@ -100,8 +99,8 @@ public class DelayedEventService implements Closeable {
         }
 
         @NotNull
-        public Builder threadPoolForHandlers(@NotNull ExecutorService val) {
-            threadPoolForHandlers = val;
+        public Builder handlerScheduler(@NotNull Scheduler val) {
+            scheduler = val;
             return this;
         }
 
@@ -162,7 +161,6 @@ public class DelayedEventService implements Closeable {
 
     private static final String DELIMITER = "###";
     private static final Logger LOG = LoggerFactory.getLogger(DelayedEventService.class);
-    private static final Duration BLOCK_DURATION = Duration.ofSeconds(1);
 
     private final Map<Class<? extends Event>, HandlerAndSubscription<? extends Event>> subscriptions = new ConcurrentHashMap<>();
 
@@ -194,7 +192,7 @@ public class DelayedEventService implements Closeable {
         pollingTimeout = checkNotShorter(builder.pollingTimeout, Duration.ofMillis(50), "polling interval");
         lockTimeout = Duration.ofSeconds(2);
         retryAttempts = checkInRange(builder.retryAttempts, 1, 100, "retry attempts");
-        handlerScheduler = Schedulers.fromExecutorService(requireNonNull(builder.threadPoolForHandlers, "handlers thread pool"));
+        handlerScheduler = requireNonNull(builder.scheduler, "scheduler");
         metrics = requireNonNull(builder.metrics, "metrics");
         dataSetPrefix = requireNonNull(builder.dataSetPrefix, "data set prefix");
         schedulingBatchSize = Limit.from(checkInRange(builder.schedulingBatchSize, 1, 1000, "scheduling batch size"));
@@ -240,7 +238,7 @@ public class DelayedEventService implements Closeable {
     public <T extends Event> boolean removeHandler(@NotNull Class<T> eventType) {
         requireNonNull(eventType, "event type");
 
-        HandlerAndSubscription subscription = subscriptions.remove(eventType);
+        HandlerAndSubscription<? extends Event> subscription = subscriptions.remove(eventType);
         if (subscription != null) {
             subscription.subscription.dispose();
             return true;
@@ -358,6 +356,7 @@ public class DelayedEventService implements Closeable {
         );
         String queue = toQueueName(eventType);
 
+        // todo reconnect instead of reset + flux concat instead of generate sink.next(0)
         Flux
                 .generate(sink -> sink.next(0))
                 .flatMap(
@@ -400,6 +399,7 @@ public class DelayedEventService implements Closeable {
         return Mono.defer(() -> {
             reactiveCommands.multi().subscribeOn(single).subscribe();
             commands.run();
+            // todo reconnect instead of reset
             return reactiveCommands.exec().subscribeOn(single).doOnError(e -> reactiveCommands.getStatefulConnection().reset());
         }).subscribeOn(single);
     }

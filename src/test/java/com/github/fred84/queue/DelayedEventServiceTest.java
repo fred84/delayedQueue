@@ -13,7 +13,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.github.fred84.queue.logging.DefaultEventContextHandler;
+import com.github.fred84.queue.context.DefaultEventContextHandler;
+import com.github.fred84.queue.metrics.NoopMetrics;
 import eu.rekawek.toxiproxy.Proxy;
 import eu.rekawek.toxiproxy.ToxiproxyClient;
 import io.lettuce.core.ClientOptions;
@@ -43,6 +44,7 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.MDC;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 class DelayedEventServiceTest {
 
@@ -174,12 +176,16 @@ class DelayedEventServiceTest {
         eventService = delayedEventService()
                 .client(redisClient)
                 .mapper(objectMapper)
-                .threadPoolForHandlers(executor)
+                .handlerScheduler(Schedulers.fromExecutorService(executor))
+                .schedulingInterval(Duration.ofSeconds(1))
+                .schedulingBatchSize(SCHEDULING_BATCH_SIZE)
                 .enableScheduling(false)
                 .pollingTimeout(POLLING_TIMEOUT)
                 .eventContextHandler(new DefaultEventContextHandler())
                 .dataSetPrefix("")
-                .schedulingBatchSize(SCHEDULING_BATCH_SIZE)
+                .retryAttempts(10)
+                .metrics(new NoopMetrics())
+                .refreshSubscriptionsInterval(Duration.ofMinutes(5))
                 .build();
 
         connection = redisClient.connect().sync();
@@ -254,11 +260,13 @@ class DelayedEventServiceTest {
         AtomicReference<String> holder = new AtomicReference<>();
         eventService.addHandler(
                 DummyEvent.class,
-                e -> Mono.subscriberContext().map(ctx -> {
-                    Map<String, String> eventContext = ctx.get("eventContext");
-                    holder.set(eventContext.get("key"));
-                    return true;
-                }),
+                e -> Mono
+                    .subscriberContext()
+                    .doOnNext(ctx -> {
+                        Map<String, String> eventContext = ctx.get("eventContext");
+                        holder.set(eventContext.get("key"));
+                    })
+                    .thenReturn(true),
                 1
         );
         // and events are queued with context

@@ -2,10 +2,12 @@ package com.github.fred84.queue;
 
 import static java.lang.Boolean.TRUE;
 
-import com.github.fred84.queue.logging.EventContextHandler;
+import com.github.fred84.queue.context.EventContextHandler;
 import io.lettuce.core.TransactionResult;
 import io.lettuce.core.api.StatefulRedisConnection;
 import java.util.function.Function;
+
+import org.jetbrains.annotations.NotNull;
 import org.reactivestreams.Subscription;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,12 +43,12 @@ class InnerSubscriber<T extends Event> extends BaseSubscriber<EventEnvelope<T>> 
     }
 
     @Override
-    protected void hookOnSubscribe(Subscription subscription) {
+    protected void hookOnSubscribe(@NotNull Subscription subscription) {
         requestInner(parallelism);
     }
 
     @Override
-    protected void hookOnNext(EventEnvelope<T> envelope) {
+    protected void hookOnNext(@NotNull EventEnvelope<T> envelope) {
         LOG.debug("event [{}] received from queue", envelope);
 
         Mono<Boolean> promise;

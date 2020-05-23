@@ -1,4 +1,4 @@
-package com.github.fred84.queue.logging;
+package com.github.fred84.queue.context;
 
 import static java.util.Collections.emptyMap;
 
