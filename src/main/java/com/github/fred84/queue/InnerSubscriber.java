@@ -2,11 +2,12 @@ package com.github.fred84.queue;
 
 import static java.lang.Boolean.TRUE;
 
-import com.github.fred84.queue.logging.LogContext;
+import com.github.fred84.queue.context.EventContextHandler;
 import io.lettuce.core.TransactionResult;
 import io.lettuce.core.api.StatefulRedisConnection;
-import java.util.Map;
 import java.util.function.Function;
+
+import org.jetbrains.annotations.NotNull;
 import org.reactivestreams.Subscription;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,7 +19,7 @@ class InnerSubscriber<T extends Event> extends BaseSubscriber<EventEnvelope<T>> 
 
     private static final Logger LOG = LoggerFactory.getLogger(InnerSubscriber.class);
 
-    private final LogContext logContext;
+    private final EventContextHandler contextHandler;
     private final Function<T, Mono<Boolean>> handler;
     private final int parallelism;
     private final StatefulRedisConnection<String, String> pollingConnection;
@@ -26,14 +27,14 @@ class InnerSubscriber<T extends Event> extends BaseSubscriber<EventEnvelope<T>> 
     private final Function<Event, Mono<TransactionResult>> deleteCommand;
 
     InnerSubscriber(
-            LogContext logContext,
+            EventContextHandler contextHandler,
             Function<T, Mono<Boolean>> handler,
             int parallelism,
             StatefulRedisConnection<String, String> pollingConnection,
             Scheduler handlerScheduler,
             Function<Event, Mono<TransactionResult>> deleteCommand
     ) {
-        this.logContext = logContext;
+        this.contextHandler = contextHandler;
         this.handler = handler;
         this.parallelism = parallelism;
         this.pollingConnection = pollingConnection;
@@ -42,23 +43,19 @@ class InnerSubscriber<T extends Event> extends BaseSubscriber<EventEnvelope<T>> 
     }
 
     @Override
-    protected void hookOnSubscribe(Subscription subscription) {
+    protected void hookOnSubscribe(@NotNull Subscription subscription) {
         requestInner(parallelism);
     }
 
     @Override
-    protected void hookOnNext(EventEnvelope<T> envelope) {
+    protected void hookOnNext(@NotNull EventEnvelope<T> envelope) {
         LOG.debug("event [{}] received from queue", envelope);
 
         Mono<Boolean> promise;
 
-        Map<String, String> originalLogContext = logContext.get();
         try {
-            logContext.set(envelope.getLogContext());
             promise = handler.apply(envelope.getPayload());
-            logContext.set(originalLogContext);
         } catch (Exception e) {
-            logContext.set(originalLogContext);
             LOG.info("error in non-blocking handler for [{}]", envelope.getType(), e);
             requestInner(1);
             return;
@@ -70,7 +67,6 @@ class InnerSubscriber<T extends Event> extends BaseSubscriber<EventEnvelope<T>> 
         }
 
         promise
-                .doFirst(() -> logContext.set(envelope.getLogContext()))
                 .defaultIfEmpty(false)
                 .doOnError(e -> LOG.warn("error occurred during handling event [{}]", envelope, e))
                 .onErrorReturn(false)
@@ -84,6 +80,7 @@ class InnerSubscriber<T extends Event> extends BaseSubscriber<EventEnvelope<T>> 
                     }
                 })
                 .subscribeOn(handlerScheduler)
+                .subscriberContext(c -> contextHandler.subscriptionContext(c, envelope.getLogContext()))
                 .subscribe(r -> {
                     LOG.debug("event processing completed [{}]", envelope);
                     requestInner(1);

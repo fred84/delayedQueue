@@ -8,8 +8,8 @@ it is suitable for many use cases.
 
 Key features are:
 - event handling is retriable at increased intervals between attempts
-- logging context could be restored right before event handling
-- support for `lifecycle` annotations
+- subscription context could be passed to a handler
+- support for the `@PreDestroy` lifecycle annotation
 - sending metrics using [Micrometer](https://github.com/micrometer-metrics/micrometer)
 
 `DelayedQueue` are highly opinionated (hence customizable), with very little configuration needed to start using it. 
@@ -27,7 +27,7 @@ repositories {
 
 ```groovy
 dependencies {
-    implementation 'com.github.fred84:delayedQueue:0.2'
+    implementation 'com.github.fred84:delayedQueue:0.4.0'
 }
 ```
 
@@ -46,12 +46,19 @@ var eventService = delayedEventService().client(redisClient).build();
 ```java
 import static com.github.fred84.queue.DelayedEventService.delayedEventService;
 
-var eventService = delayedEventService()
+eventService = delayedEventService()
         .client(redisClient)
         .mapper(objectMapper)
-        .threadPoolForHandlers(executor)
-        .logContext(new MDCLogContext())
-        .metrics(new MicrometerMetrics(registry))
+        .handlerScheduler(Schedulers.fromExecutorService(executor))
+        .schedulingInterval(Duration.ofSeconds(1))
+        .schedulingBatchSize(SCHEDULING_BATCH_SIZE)
+        .enableScheduling(false)
+        .pollingTimeout(POLLING_TIMEOUT)
+        .eventContextHandler(new DefaultEventContextHandler())
+        .dataSetPrefix("")
+        .retryAttempts(10)
+        .metrics(new NoopMetrics())
+        .refreshSubscriptionsInterval(Duration.ofMinutes(5))
         .build();
 ```
 
@@ -60,28 +67,35 @@ var eventService = delayedEventService()
 ```java
 eventService.addHandler(DummyEvent.class, e -> Mono.just(true), 1);
 ```
-### Add blocking event handler
-
-```java
-eventService.addBlockingHandler(DummyEvent.class, e -> true, 1);
-```
 
 ### Enqueue event
 
 ```java
-eventService.enqueueWithDelay(new DummyEvent("1"), Duration.ofHours(1));
-```
-
-or 
-
-```java
-eventService.enqueueWithDelayNonBlocking(new DummyEvent("1"), Duration.ofHours(1)).subscribe(...);
+eventService.enqueueWithDelayNonBlocking(new DummyEvent("1"), Duration.ofHours(1)).subscribe();
 ```
 
 ### Close service
 
 ```java
 eventService.close();
+```
+
+### Event context
+
+```java
+eventService.addHandler(
+        DummyEvent.class,
+        e -> Mono
+            .subscriberContext()
+            .doOnNext(ctx -> {
+                Map<String, String> eventContext = ctx.get("eventContext");
+                log.info("context key {}", eventContext.get("key"));
+            })
+            .thenReturn(true),
+        1
+);
+
+eventService.enqueueWithDelayNonBlocking(new DummyEvent("1"), Duration.ofHours(1), Map.of("key", "value")).subscribe();
 ```
 
 ## Contribution
