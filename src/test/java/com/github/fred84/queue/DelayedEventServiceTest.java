@@ -46,7 +46,6 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
-// todo prefetch default value
 class DelayedEventServiceTest {
 
     private static class DummyEvent implements Event {
