@@ -1,20 +1,20 @@
-Several years ago we have to solve how to enqueue events with an arbitrary delay. E.g. check a status of a payment 3 hours later,
-or send notification to your client in 45 minutes.
-At that point of time we didn't find suitable libraries to accomplish this task and which do not impose configuration and
-maintaince overhead. After analyzing possible solutions we ended up building our own small library
-[delayed queue](https://github.com/fred84/delayedQueue) in Java on top of `Redis` as storage engine.
+Several years ago we had to solve how to enqueue events with an arbitrary delay, e.g. check a status of a payment 3 hours later,
+or send notification to a client in 45 minutes.
+At that point of time, we didn't find suitable libraries to accomplish this task, which didn't require us to spend time on configuration and
+maintenance. After analyzing possible solutions we ended up building our own small library
+[delayed queue](https://github.com/fred84/delayedQueue) in Java language on top of `Redis` storage engine.
 In this article I'll explain capabilities of this library, alternatives and problems we solved during creation process. 
 
 ## Functionality
 
-So what exactly `delayed queue` capable of? An event, added to delayed queue, is delivered to a handler after arbitrary delay.
-If event handling ends up unsuccessfully, the event would be delivered again later. However number of retries is limited.
-`Redis` do not provide any resilient garantues, users should be prepared to for this.
-Howerer in clustered configuration `Redis` shows sufficiently high reliability, and we haven't faced any issues during 1.5 years of usage.
+So what exactly is `delayed queue` capable of? An event, added to delayed queue, is delivered to a handler after arbitrary delay.
+If event handling is unsuccessful, it would be delivered again later. However, the number of retries is limited.
+`Redis` does not provide any resilient guarantees, thus users should be prepared to deal with this.
+Regardless, in clustered configuration `Redis` shows sufficiently high reliability and we haven't faced any issues during 1.5 years of usage.
 
 ### API
 
-#### Add event to a queue
+#### Add an event to a queue
 ```java
 eventService.enqueueWithDelayNonBlocking(new DummyEvent("1"), Duration.ofHours(1)).subscribe();
 ```
@@ -23,7 +23,7 @@ Please beware, that the method returns `Mono`, so you have to call one of the me
 - `subscribe(...)`
 - `block()`
 
-More details on this could be found in documentation of `Project Reactor`. Event context could be added in the following manner:
+More details on this could be found in the documentation of `Project Reactor`. Event context could be added in the following manner:
 
 ```java
 eventService.enqueueWithDelayNonBlocking(new DummyEvent("1"), Duration.ofHours(1), Map.of("key", "value")).subscribe();
@@ -86,21 +86,21 @@ var eventService = delayedEventService()
         .build();
 ```
 
-Shutdown service (and all open connections to `Redis`) could be done via `eventService.close()` or via framework with support
-for lifecycle annotation `@javax.annotation.PreDestroy`.
+Shutting down the service (and all open connections to `Redis`) could be done via `eventService.close()` or framework with support
+for the lifecycle annotation `@javax.annotation.PreDestroy`.
 
 #### Metrics
 
-Any system could behave in an incorrect way and we have to monitor it. For `delayed queue` we should be mostly interested in:
+Any system is prone to face faults and we have to monitor it. For `delayed queue` we should look out for:
 - `Redis` overall memory usage
-- `list` length for every event type ("delayed.queue.ready.for.handling.count" + tag with event type)
+- size of `list` for every event type ("delayed.queue.ready.for.handling.count" + a tag with event type)
 
 ## History
 
-Here is a brief overview how `delayed queue` evolved over time. In 2018 we launched our small project
+Here is a brief overview on how `delayed queue` evolved over time. In 2018, we launched our small project
 in [Amazon Web Services](https://aws.amazon.com/). Only 2 engineers were in charge of this project, so adding more 
-components, which require configuration and maintainces were discouraged. Main motto was "use components managed by AWS
-unless they are too pricey"
+components, which required configuration and maintenance was discouraged. The main aim was "to use components managed by AWS
+unless they were too pricey".
 
 ### Possible candidates
 
@@ -108,24 +108,24 @@ unless they are too pricey"
 - JMS
 - [AWS SQS](https://aws.amazon.com/sqs/)
 
-The first two were rejected due to maintainces requirements. The last one (SQS) was rejected due to maximum delay could
-be bigger than 15 minutes.
+The first two were rejected due to maintenance requirements. The last one (SQS) was not considered as the maximum
+delay could not be bigger than 15 minutes.
 
 ### Overlooked candidates
 
-Unfortunately we missed ready libraries, which count solve our needs and were discovered much-much later:
+Unfortunately, we missed some libraries, which could have solved our needs and were discovered much-much later:
 - [Netflix dyno-queues](https://github.com/Netflix/dyno-queues)
 - [AWS MQ](https://aws.amazon.com/amazon-mq/)
 
-The first one uses the same technology stack (Java and Redis), the latter is built on top of [ActiveMQ](https://activemq.apache.org/)
+The first one uses the same technology stack (Java and Redis), the latter is built on top of [ActiveMQ](https://activemq.apache.org/).
 
 ### First naive implementation
 
-Initially we already had backup mechanish with polling relational database once a day. After reading several articles on
-organizing simple delayed queues we decided to build our solution around `Redis`, not RDBMS. The structure inside `Redis`
-is following:
-- event is added to [sorted sets](https://redis.io/topics/data-types), where `weight` serves as execution time
-- once `weight` becomes lower that `now`, element is moved from `sorted_set` to `list` (which is uses as a `queue` with `push` and `pop` methods)
+Initially, we already had a backup mechanism with polling a relational database once a day. After reading several articles on
+organizing simple delayed queues, we decided to build our solution around `Redis`, not RDBMS. The structure inside `Redis`
+is as following:
+- an event is added to [sorted sets](https://redis.io/topics/data-types), where `weight` serves as future execution time
+- once `weight` becomes lower that `now`, the event is moved from `sorted_set` to `list` (which could be used as a `queue` with `push` and `pop` methods)
 
 First version of the dispatcher, responsible for moving events from `sorted set` to `list` was:
 (simplified code is shown here and after):
@@ -140,8 +140,8 @@ events.forEach(key -> {
 });
 ```
 
-Event handlers were build on top of [Spring Integration](https://spring.io/projects/spring-integration),
-which in turn under the hood did literally:
+Event handlers were built on top of [Spring Integration](https://spring.io/projects/spring-integration),
+which executed the following command under the hood:
 
 ```java
 redis.brpop(listName)
@@ -151,8 +151,9 @@ The first problems came soon.
 
 ### Unreliable dispatcher
 
-If error arised during adding element to `list` (e.g. connection timeout after element was added), multiple elements 
-were added to the list. Luckily, `Redis` supports transactions, so we wrapped 2 commands above into a transaction.
+If an error appeared in the process of adding an element to the `list` (e.g. a connection timeout after the element was added),
+the dispatcher retried to do this operation, which resulted in multiple copies of an event being added to the `list`.
+Luckily, `Redis` supports transactions, so we wrapped the 2 commands above into transaction.
 
 ```java
 events.forEach(key -> {
@@ -166,9 +167,9 @@ events.forEach(key -> {
 
 ### Unreliable handler
 
-On the other side of the list lurked another problem. If a handler fails, event will be lost forever. As a solution we 
-chose to reschedule event to a later period of time (unless maximum number of attempts has been reached) and delete it 
-only after successful processing by the handler.
+On the other side of the `list` lurked another problem. If a handler failed, an event would be lost forever.
+As a solution, we chose to reschedule an event to a later period of time (unless a maximum number of attempts had been reached)
+and delete it only after successful processing by the handler.
 
 ```java
 events.forEach(key -> {
@@ -183,11 +184,11 @@ events.forEach(key -> {
 
 ### Non-unique event
 
-As I mentioned before, we already had the fallback mechanism, which polled RDBMS and readded all "pending" entities to 
-`delayed queue`. At that time `key` in `sorted set` were structured as ```metadata;payload```, with mutable metadata (
-e.g. attempt number, log context, ...) and immutable payload. So we ended up with multiple entries it `sorted set` for the 
-same event. To solve this problem, we moved ```metadata;payload``` to new structure `Redis hset` and kept only 
-`event type + event id` as a key in `sorted set`. As a result event enqueueing transformed from:
+As I mentioned before, we already had the fallback mechanism, which polled RDBMS and re-added all "pending" entities to 
+`delayed queue`. At that time, `key` in `sorted set` was structured as ```metadata;payload```, with a mutable metadata (
+e.g. an attempt number, a log context, ...) and an immutable payload. So again, it resulted in multiple copies of an event 
+being added to the `list`. To solve this problem, we moved ```metadata;payload``` to new structure `Redis hset` and kept only 
+`event type + event id` as a key in `sorted set`. Consequently, event enqueueing transformed from:
 
 ```java
 var envelope = metadata + SEPARATOR + payload;
@@ -208,9 +209,9 @@ redis.exec();
 
 ### Sequential dispatcher launch
 
-All our handlers were idempotent, so we didn't pay much attention to event duplicates. However, there we still room for
-improvement. The dispatchers were running on all our application instances and from time to time were launched at nearly
-the same moment. Which resulted in dumplicate events in `list`. The solution was the trivial lock with small TTL:
+All our handlers were idempotent, so we didn't pay much attention to event duplicates. However, there was still room for
+improvement. The dispatchers were running on all our application instances and from time to time were launched simultaneously.
+This again resulted in duplicate events in `list`. The solution was the trivial lock with small TTL:
 
 ```java
 redis.set(lockKey, "value", ex(lockTimeout.toMillis() * 1000).nx());
@@ -219,15 +220,15 @@ redis.set(lockKey, "value", ex(lockTimeout.toMillis() * 1000).nx());
 ## Fork into independent project
 
 When the necessity for using `delayed queue` in a project without `Spring` emerged, we moved it to a standalone project.
-To accomplish it we were forced to remove following dependencies:
+To accomplish it, we were forced to remove the following dependencies:
 
 - [Spring Data Redis](https://spring.io/projects/spring-data-redis)
 - [Spring integration](https://spring.io/projects/spring-integration)
 
-The first one were easily replaced with `Lettuce` Redis driver. The second caused much more changes.
-At that point of time I already had some experience working with reactive streams in general and with `Project Reactor`
+The first one was easily replaced with the `Lettuce` Redis driver. The second led to much more changes.
+At that point of time I had already acquired some experience working with reactive streams in general and with `Project Reactor`
 in particular. So we chose "hot stream" as a source for our handlers.
-To achieve uniform distibution of event among handlers on different application instances we had had to implement our own
+To achieve the uniform distribution of events among handlers on different application instances we had to implement our own
  [Subscriber](https://www.reactive-streams.org/reactive-streams-1.0.0-javadoc/org/reactivestreams/Subscriber.html):
 
 ```java
@@ -251,12 +252,12 @@ class InnerSubscriber<T extends Event> extends BaseSubscriber<EventEnvelope<T>> 
 }
 ```
 
-As a result we created a library, which delivers events to registered handlers (unlike `Netflix dyno queue`, where you
-have to poll for events).
+As a result, we created a library, which delivers events to registered handlers (unlike `Netflix dyno queue`, where you
+have to poll a storage for events).
 
 ### What's next?
 
-- add Kotlin DSL. Our new projects is created in Kotlin nowadays, so it would be handy to use `suspend fun` instead of
+- add Kotlin DSL. Currently, our new projects are created in Kotlin language, so it would be handy to use `suspend fun` instead of
  direct interaction with `Project Reactor` API
 - add configurable intervals for retries
 - replace `Redis transactions` with `LUA script`
