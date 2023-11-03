@@ -444,8 +444,12 @@ public class DelayedEventService implements Closeable {
             return 10L;
         }
 
-        if (attempt < 10 + 10) { // next 10 attempts each minute
+        if (attempt < 20) { // next 10 attempts each minute
             return 60L;
+        }
+
+        if (attempt < 40) { // next 20 attempts each five minutes
+            return 60L * 5;
         }
 
         return 60L * 24; // next 50 attempts once an hour
