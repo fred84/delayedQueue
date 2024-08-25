@@ -80,7 +80,7 @@ class InnerSubscriber<T extends Event> extends BaseSubscriber<EventEnvelope<T>> 
                     }
                 })
                 .subscribeOn(handlerScheduler)
-                .subscriberContext(c -> contextHandler.subscriptionContext(c, envelope.getLogContext()))
+                .contextWrite(c -> contextHandler.subscriptionContext(c, envelope.getLogContext()))
                 .subscribe(r -> {
                     LOG.debug("event processing completed [{}]", envelope);
                     requestInner(1);

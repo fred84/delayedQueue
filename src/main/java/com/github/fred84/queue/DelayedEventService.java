@@ -267,8 +267,7 @@ public class DelayedEventService implements Closeable {
         requireNonNull(delay, "delay");
         requireNonNull(event.getId(), "event id");
 
-        return Mono.subscriberContext()
-                .flatMap(ctx -> enqueueWithDelayInner(event, delay, contextHandler.eventContext(ctx)))
+        return Mono.deferContextual(ctx -> enqueueWithDelayInner(event, delay, contextHandler.eventContext(ctx)))
                 .then();
     }
 

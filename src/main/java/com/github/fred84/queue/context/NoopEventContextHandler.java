@@ -4,11 +4,12 @@ import static java.util.Collections.emptyMap;
 
 import java.util.Map;
 import reactor.util.context.Context;
+import reactor.util.context.ContextView;
 
 public final class NoopEventContextHandler implements EventContextHandler {
 
     @Override
-    public Map<String, String> eventContext(Context subscriptionContext) {
+    public Map<String, String> eventContext(ContextView subscriptionContext) {
         return emptyMap();
     }
 

@@ -261,16 +261,15 @@ class DelayedEventServiceTest {
         eventService.addHandler(
                 DummyEvent.class,
                 e -> Mono
-                    .subscriberContext()
-                    .doOnNext(ctx -> {
+                    .deferContextual(ctx -> {
                         Map<String, String> eventContext = ctx.get("eventContext");
                         holder.set(eventContext.get("key"));
-                    })
-                    .thenReturn(true),
+                        return Mono.just(true);
+                    }),
                 1
         );
         // and events are queued with context
-        enqueue(1).subscriberContext(ctx -> ctx.put("eventContext", singletonMap("key", contextValue))).block();
+        enqueue(1).contextWrite(ctx -> ctx.put("eventContext", singletonMap("key", contextValue))).block();
         // when
         eventService.dispatchDelayedMessages();
         // then
