@@ -68,6 +68,9 @@ class InnerSubscriber<T extends Event> extends BaseSubscriber<EventEnvelope<T>> 
 
         promise
                 .defaultIfEmpty(false)
+                // todo think how to inject log context enricher (e.g. what fields to set in logs)
+
+                // todo think of introducing an error which will terminate execution gracefully (e.g. no need to fail hard)
                 .doOnError(e -> LOG.warn("error occurred during handling event [{}]", envelope, e))
                 .onErrorReturn(false)
                 .flatMap(completed -> {
@@ -80,7 +83,12 @@ class InnerSubscriber<T extends Event> extends BaseSubscriber<EventEnvelope<T>> 
                     }
                 })
                 .subscribeOn(handlerScheduler)
+<<<<<<< Updated upstream
                 .subscriberContext(c -> contextHandler.subscriptionContext(c, envelope.getLogContext()))
+=======
+                // todo context?
+                .contextWrite(c -> contextHandler.subscriptionContext(c, envelope.getLogContext()))
+>>>>>>> Stashed changes
                 .subscribe(r -> {
                     LOG.debug("event processing completed [{}]", envelope);
                     requestInner(1);

@@ -522,7 +522,7 @@ class DelayedEventServiceTest {
     }
 
     private Proxy createRedisProxy() throws IOException {
-        return toxiProxyClient.createProxy("redis", TOXIPROXY_IP + ":63790", "localhost:6379");
+        return toxiProxyClient.createProxy("redis", "0.0.0.0:63790", "dq_redis:6379");
     }
 
     private Mono<Void> enqueue(int num) {
