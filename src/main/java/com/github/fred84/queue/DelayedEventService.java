@@ -288,6 +288,8 @@ public class DelayedEventService implements Closeable {
     }
 
     private Mono<Void> enqueueWithDelayInner(Event event, Duration delay) {
+        // todo pre-create script
+
         String luaScript = "redis.call('HSET', KEYS[1], ARGV[1], ARGV[2]); " +
                 "redis.call('ZADD', KEYS[2], 'NX', ARGV[3], ARGV[1]); " +
                 "return 'OK'";
@@ -295,7 +297,6 @@ public class DelayedEventService implements Closeable {
         String key = getKey(event);
         String rawEnvelope = serialize(EventEnvelope.create(event, Collections.emptyMap()));
 
-        // todo test drop script
         return reactiveCommands.eval(
                 luaScript,
                 ScriptOutputType.STATUS,
@@ -303,15 +304,7 @@ public class DelayedEventService implements Closeable {
                 key,
                 rawEnvelope,
                String.valueOf(System.currentTimeMillis() + delay.toMillis())
-        ).then();
-
-/*
-        return executeInTransaction(() -> {
-
-            reactiveCommands.hset(metadataHset, key, rawEnvelope).subscribeOn(single).subscribe();
-            reactiveCommands.zadd(zsetName, nx(), (System.currentTimeMillis() + delay.toMillis()), key).subscribeOn(single).subscribe();
-        }).doOnNext(v -> metrics.incrementEnqueueCounter(event.getClass()));
-*/
+        ).doOnNext(v -> metrics.incrementEnqueueCounter(event.getClass())).then();
     }
 
     void dispatchDelayedMessages() {

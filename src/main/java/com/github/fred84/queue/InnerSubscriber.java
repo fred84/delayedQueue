@@ -2,7 +2,6 @@ package com.github.fred84.queue;
 
 import static java.lang.Boolean.TRUE;
 
-import com.github.fred84.queue.context.EventContextHandler;
 import io.lettuce.core.TransactionResult;
 import io.lettuce.core.api.StatefulRedisConnection;
 import java.util.function.Function;
@@ -71,7 +70,7 @@ class InnerSubscriber<T extends Event> extends BaseSubscriber<EventEnvelope<T>> 
                     if (TRUE.equals(completed)) {
                         LOG.debug("deleting event {} from delayed queue", envelope.getPayload());
                         // todo we could also fail here!!! test me! with latch and toxyproxy
-                        return deleteCommand.apply(envelope.getPayload()).doOnNext(i -> LOG.debug("!!! deleted")).map(r -> true);
+                        return deleteCommand.apply(envelope.getPayload()).map(r -> true);
                     } else {
                         return Mono.just(true);
                     }
