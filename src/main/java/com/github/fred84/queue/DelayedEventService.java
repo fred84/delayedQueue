@@ -1,15 +1,12 @@
 package com.github.fred84.queue;
 
 import static io.lettuce.core.SetArgs.Builder.ex;
-import static io.lettuce.core.ZAddArgs.Builder.nx;
 import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.github.fred84.queue.context.EventContextHandler;
-import com.github.fred84.queue.context.NoopEventContextHandler;
 import com.github.fred84.queue.metrics.Metrics;
 import com.github.fred84.queue.metrics.NoopMetrics;
 import io.lettuce.core.KeyValue;
@@ -29,6 +26,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -57,7 +55,6 @@ public class DelayedEventService implements Closeable {
         private Scheduler scheduler = Schedulers.elastic();
         private int retryAttempts = 70;
         private Metrics metrics = new NoopMetrics();
-        private EventContextHandler eventContextHandler = new NoopEventContextHandler();
         private String dataSetPrefix = "de_";
         private Duration refreshSubscriptionInterval;
 
@@ -109,12 +106,6 @@ public class DelayedEventService implements Closeable {
         @NotNull
         public Builder metrics(@NotNull Metrics val) {
             metrics = val;
-            return this;
-        }
-
-        @NotNull
-        public Builder eventContextHandler(@NotNull EventContextHandler val) {
-            eventContextHandler = val;
             return this;
         }
 
@@ -179,7 +170,6 @@ public class DelayedEventService implements Closeable {
     private final Scheduler single = Schedulers.newSingle("redis-single");
     private final ScheduledThreadPoolExecutor dispatcherExecutor = new ScheduledThreadPoolExecutor(1);
     private final Metrics metrics;
-    private final EventContextHandler contextHandler;
     private final String dataSetPrefix;
     private final Limit schedulingBatchSize;
 
@@ -190,7 +180,6 @@ public class DelayedEventService implements Closeable {
     private DelayedEventService(Builder builder) {
         mapper = requireNonNull(builder.mapper, "object mapper");
         client = requireNonNull(builder.client, "redis client");
-        contextHandler = requireNonNull(builder.eventContextHandler, "event context handler");
         pollingTimeout = checkNotShorter(builder.pollingTimeout, Duration.ofMillis(50), "polling interval");
         lockTimeout = Duration.ofSeconds(2);
         retryAttempts = checkInRange(builder.retryAttempts, 1, 100, "retry attempts");
@@ -269,8 +258,7 @@ public class DelayedEventService implements Closeable {
         requireNonNull(delay, "delay");
         requireNonNull(event.getId(), "event id");
 
-        return Mono.subscriberContext()
-                .flatMap(ctx -> enqueueWithDelayInner(event, delay, contextHandler.eventContext(ctx)));
+        return enqueueWithDelayInner(event, delay);
     }
 
     @Override
@@ -299,13 +287,13 @@ public class DelayedEventService implements Closeable {
         );
     }
 
-    private Mono<Void> enqueueWithDelayInner(Event event, Duration delay, Map<String, String> context) {
+    private Mono<Void> enqueueWithDelayInner(Event event, Duration delay) {
         String luaScript = "redis.call('HSET', KEYS[1], ARGV[1], ARGV[2]); " +
                 "redis.call('ZADD', KEYS[2], 'NX', ARGV[3], ARGV[1]); " +
                 "return 'OK'";
 
         String key = getKey(event);
-        String rawEnvelope = serialize(EventEnvelope.create(event, context));
+        String rawEnvelope = serialize(EventEnvelope.create(event, Collections.emptyMap()));
 
         // todo test drop script
         return reactiveCommands.eval(
@@ -365,7 +353,6 @@ public class DelayedEventService implements Closeable {
     ) {
         StatefulRedisConnection<String, String> pollingConnection = client.connect();
         InnerSubscriber<T> subscription = new InnerSubscriber<>(
-                contextHandler,
                 handler,
                 parallelism,
                 pollingConnection,

@@ -19,7 +19,6 @@ class InnerSubscriber<T extends Event> extends BaseSubscriber<EventEnvelope<T>> 
 
     private static final Logger LOG = LoggerFactory.getLogger(InnerSubscriber.class);
 
-    private final EventContextHandler contextHandler;
     private final Function<T, Mono<Boolean>> handler;
     private final int parallelism;
     private final StatefulRedisConnection<String, String> pollingConnection;
@@ -27,14 +26,12 @@ class InnerSubscriber<T extends Event> extends BaseSubscriber<EventEnvelope<T>> 
     private final Function<Event, Mono<TransactionResult>> deleteCommand;
 
     InnerSubscriber(
-            EventContextHandler contextHandler,
             Function<T, Mono<Boolean>> handler,
             int parallelism,
             StatefulRedisConnection<String, String> pollingConnection,
             Scheduler handlerScheduler,
             Function<Event, Mono<TransactionResult>> deleteCommand
     ) {
-        this.contextHandler = contextHandler;
         this.handler = handler;
         this.parallelism = parallelism;
         this.pollingConnection = pollingConnection;
@@ -80,7 +77,6 @@ class InnerSubscriber<T extends Event> extends BaseSubscriber<EventEnvelope<T>> 
                     }
                 })
                 .subscribeOn(handlerScheduler)
-                .subscriberContext(c -> contextHandler.subscriptionContext(c, envelope.getLogContext()))
                 .subscribe(r -> {
                     LOG.debug("event processing completed [{}]", envelope);
                     requestInner(1);
