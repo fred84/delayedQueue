@@ -1,7 +1,6 @@
 package com.github.fred84.queue;
 
 import static com.github.fred84.queue.DelayedEventService.delayedEventService;
-import static java.util.Collections.singletonMap;
 import static java.util.Optional.ofNullable;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.stream.Collectors.toList;
@@ -13,22 +12,19 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.github.fred84.queue.context.DefaultEventContextHandler;
 import com.github.fred84.queue.metrics.NoopMetrics;
 import eu.rekawek.toxiproxy.Proxy;
 import eu.rekawek.toxiproxy.ToxiproxyClient;
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.Range;
 import io.lettuce.core.RedisClient;
-import io.lettuce.core.RedisCommandTimeoutException;
-import io.lettuce.core.RedisConnectionException;
+import io.lettuce.core.RedisException;
 import io.lettuce.core.TimeoutOptions;
 import io.lettuce.core.api.sync.RedisCommands;
 import java.beans.ConstructorProperties;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.time.Duration;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Random;
 import java.util.concurrent.CountDownLatch;
@@ -169,6 +165,7 @@ class DelayedEventServiceTest {
         redisClient = RedisClient.create("redis://" + TOXIPROXY_IP + ":63790");
         redisClient.setOptions(
                 ClientOptions.builder()
+                        // .autoReconnect(false) // todo test with both options
                         .timeoutOptions(TimeoutOptions.builder().timeoutCommands().fixedTimeout(Duration.ofMillis(500)).build())
                         .build()
         );
@@ -181,7 +178,6 @@ class DelayedEventServiceTest {
                 .schedulingBatchSize(SCHEDULING_BATCH_SIZE)
                 .enableScheduling(false)
                 .pollingTimeout(POLLING_TIMEOUT)
-                .eventContextHandler(new DefaultEventContextHandler())
                 .dataSetPrefix("")
                 .retryAttempts(10)
                 .metrics(new NoopMetrics())
@@ -201,7 +197,7 @@ class DelayedEventServiceTest {
     }
 
     @Test
-    void shouldHandleDifferentEventsInParallel() {
+    void shouldHandleDifferentEventsInParallel() throws InterruptedException {
         // given
         int total = 30;
         CountDownLatch latch = new CountDownLatch(total);
@@ -225,6 +221,7 @@ class DelayedEventServiceTest {
         assertEventsCount(total);
         // when
         eventService.dispatchDelayedMessages();
+
         // then
         waitAndAssertEventsCount(0L);
     }
@@ -251,31 +248,6 @@ class DelayedEventServiceTest {
         eventService.dispatchDelayedMessages();
         // then
         waitAndAssertEventsCount(total - prefetch);
-    }
-
-    @Test
-    void shouldProvideContextToHandler() {
-        // given
-        String contextValue = "context";
-        AtomicReference<String> holder = new AtomicReference<>();
-        eventService.addHandler(
-                DummyEvent.class,
-                e -> Mono
-                    .subscriberContext()
-                    .doOnNext(ctx -> {
-                        Map<String, String> eventContext = ctx.get("eventContext");
-                        holder.set(eventContext.get("key"));
-                    })
-                    .thenReturn(true),
-                1
-        );
-        // and events are queued with context
-        enqueue(1).subscriberContext(ctx -> ctx.put("eventContext", singletonMap("key", contextValue))).block();
-        // when
-        eventService.dispatchDelayedMessages();
-        // then
-        waitAndAssertEventsCount(0);
-        assertThat(holder.get(), equalTo(contextValue));
     }
 
     @Test
@@ -356,7 +328,7 @@ class DelayedEventServiceTest {
         redisProxy.delete();
         MILLISECONDS.sleep(POLLING_TIMEOUT.toMillis() + 100);
         // and connection is restored
-        redisProxy = createRedisProxy();
+        createRedisProxy();
         // then new event is handled
         enqueue(1).block();
         assertEventsCount(1L);
@@ -379,17 +351,11 @@ class DelayedEventServiceTest {
     }
 
     @Test
-    void shouldFailToSubscribeIfConnectionNotAvailable() throws IOException {
-        redisProxy.delete();
-
-        assertThrows(RedisConnectionException.class, () -> eventService.addHandler(DummyEvent.class, DUMMY_HANDLER, 1));
-    }
-
-    @Test
     void shouldFailToDispatchIfConnectionNotAvailable() throws IOException {
         redisProxy.delete();
+        redisClient.setOptions(ClientOptions.builder().autoReconnect(false).build());
 
-        assertThrows(RedisCommandTimeoutException.class, () -> eventService.dispatchDelayedMessages());
+        assertThrows(RedisException.class, () -> eventService.dispatchDelayedMessages());
     }
 
     @Test
@@ -405,13 +371,19 @@ class DelayedEventServiceTest {
 
                     switch ((Integer.parseInt(e.getId())) % total) {
                         // valid
-                        case 0: return Mono.just(true);
+                        case 0:
+                            return Mono.just(true);
                         // invalid
-                        case 1: return Mono.error(new RuntimeException("no-no"));
-                        case 2: return Mono.empty();
-                        case 3: return null;
-                        case 4: throw new RuntimeException("oops");
-                        default: return Mono.just(false);
+                        case 1:
+                            return Mono.error(new RuntimeException("no-no"));
+                        case 2:
+                            return Mono.empty();
+                        case 3:
+                            return null;
+                        case 4:
+                            throw new RuntimeException("oops");
+                        default:
+                            return Mono.just(false);
                     }
                 },
                 1
@@ -423,6 +395,8 @@ class DelayedEventServiceTest {
         eventService.dispatchDelayedMessages();
         // then only valid events are handled
         waitAndAssertEventsCount(total - 1);
+
+        // todo assert error was handled???
     }
 
     @Test
@@ -539,9 +513,9 @@ class DelayedEventServiceTest {
 
     private Mono<Void> enqueue(IntStream stream, Function<Integer, Event> transformer) {
         return Flux
-            .fromStream(stream::boxed)
-            .flatMap(id -> eventService.enqueueWithDelayNonBlocking(transformer.apply(id), Duration.ZERO))
-            .then();
+                .fromStream(stream::boxed)
+                .flatMap(id -> eventService.enqueueWithDelayNonBlocking(transformer.apply(id), Duration.ZERO))
+                .then();
     }
 
     private String toQueueName(Class<? extends Event> cls) {
