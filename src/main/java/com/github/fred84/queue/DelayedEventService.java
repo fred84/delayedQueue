@@ -1,6 +1,7 @@
 package com.github.fred84.queue;
 
 import static io.lettuce.core.SetArgs.Builder.ex;
+import static io.lettuce.core.ZAddArgs.Builder.nx;
 import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
 
@@ -15,7 +16,6 @@ import io.lettuce.core.Range;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisCommandTimeoutException;
 import io.lettuce.core.RedisException;
-import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.TransactionResult;
 import io.lettuce.core.Value;
 import io.lettuce.core.api.StatefulRedisConnection;
@@ -25,7 +25,6 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.time.Duration;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -154,6 +153,9 @@ public class DelayedEventService implements Closeable {
 
     private static final String DELIMITER = "###";
     private static final Logger LOG = LoggerFactory.getLogger(DelayedEventService.class);
+    private static final String ENQUEUE_SCRIPT = "redis.call('HSET', KEYS[1], ARGV[1], ARGV[2]); " +
+            "redis.call('ZADD', KEYS[2], 'NX', ARGV[3], ARGV[1]); " +
+            "return 'OK'";
 
     private final Map<Class<? extends Event>, HandlerAndSubscription<? extends Event>> subscriptions = new ConcurrentHashMap<>();
 
@@ -258,7 +260,8 @@ public class DelayedEventService implements Closeable {
         requireNonNull(delay, "delay");
         requireNonNull(event.getId(), "event id");
 
-        return enqueueWithDelayInner(event, delay);
+        return enqueueWithDelayInner(event, delay)
+                .then();
     }
 
     @Override
@@ -287,24 +290,14 @@ public class DelayedEventService implements Closeable {
         );
     }
 
-    private Mono<Void> enqueueWithDelayInner(Event event, Duration delay) {
-        // todo pre-create script
+    private Mono<TransactionResult> enqueueWithDelayInner(Event event, Duration delay) {
+        return executeInTransaction(() -> {
+            String key = getKey(event);
+            String rawEnvelope = serialize(EventEnvelope.create(event, Collections.emptyMap()));
 
-        String luaScript = "redis.call('HSET', KEYS[1], ARGV[1], ARGV[2]); " +
-                "redis.call('ZADD', KEYS[2], 'NX', ARGV[3], ARGV[1]); " +
-                "return 'OK'";
-
-        String key = getKey(event);
-        String rawEnvelope = serialize(EventEnvelope.create(event, Collections.emptyMap()));
-
-        return reactiveCommands.eval(
-                luaScript,
-                ScriptOutputType.STATUS,
-                Arrays.asList(metadataHset, zsetName).toArray(new String[2]),
-                key,
-                rawEnvelope,
-               String.valueOf(System.currentTimeMillis() + delay.toMillis())
-        ).doOnNext(v -> metrics.incrementEnqueueCounter(event.getClass())).then();
+            reactiveCommands.hset(metadataHset, key, rawEnvelope).subscribeOn(single).subscribe();
+            reactiveCommands.zadd(zsetName, nx(), (System.currentTimeMillis() + delay.toMillis()), key).subscribeOn(single).subscribe();
+        }).doOnNext(v -> metrics.incrementEnqueueCounter(event.getClass()));
     }
 
     void dispatchDelayedMessages() {
@@ -357,9 +350,6 @@ public class DelayedEventService implements Closeable {
         // todo reconnect instead of reset + flux concat instead of generate sink.next(0)
         Flux
                 .generate(sink -> sink.next(0))
-                .doOnNext(i -> {
-                    LOG.debug("!!! connecting to redis");
-                })
                 .flatMap(
                         r -> pollingConnection
                                 .reactive()
@@ -406,9 +396,6 @@ public class DelayedEventService implements Closeable {
     }
 
     private void handleDelayedTask(String key) {
-        // todo I can get all the keys in 1 go
-        // then recalculate everything in java
-        // and update using pipeline!
         String rawEnvelope = dispatchCommands.hget(metadataHset, key);
 
         // We could have stale data because other instance already processed and deleted this key

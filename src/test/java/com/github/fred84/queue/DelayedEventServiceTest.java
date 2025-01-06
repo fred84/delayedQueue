@@ -4,10 +4,7 @@ import static com.github.fred84.queue.DelayedEventService.delayedEventService;
 import static java.util.Optional.ofNullable;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.stream.Collectors.toList;
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.equalTo;
-import static org.hamcrest.Matchers.greaterThan;
-import static org.hamcrest.Matchers.is;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -31,13 +28,11 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.slf4j.MDC;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
@@ -165,7 +160,6 @@ class DelayedEventServiceTest {
         redisClient = RedisClient.create("redis://" + TOXIPROXY_IP + ":63790");
         redisClient.setOptions(
                 ClientOptions.builder()
-                        // .autoReconnect(false) // todo test with both options
                         .timeoutOptions(TimeoutOptions.builder().timeoutCommands().fixedTimeout(Duration.ofMillis(500)).build())
                         .build()
         );
@@ -186,8 +180,6 @@ class DelayedEventServiceTest {
 
         connection = redisClient.connect().sync();
         connection.flushall();
-
-        MDC.clear();
     }
 
     @AfterEach
@@ -197,7 +189,7 @@ class DelayedEventServiceTest {
     }
 
     @Test
-    void shouldHandleDifferentEventsInParallel() throws InterruptedException {
+    void shouldHandleDifferentEventsInParallel() {
         // given
         int total = 30;
         CountDownLatch latch = new CountDownLatch(total);
@@ -218,7 +210,7 @@ class DelayedEventServiceTest {
             }
         }).block();
 
-        assertEventsCount(total);
+        assertScheduledMessagesInZsetCount(total);
         // when
         eventService.dispatchDelayedMessages();
 
@@ -243,7 +235,7 @@ class DelayedEventServiceTest {
         );
         // and events are queued
         enqueue(total).block();
-        assertEventsCount(total);
+        assertScheduledMessagesInZsetCount(total);
         // when
         eventService.dispatchDelayedMessages();
         // then
@@ -254,30 +246,25 @@ class DelayedEventServiceTest {
     void shouldCompleteInTimelyMannerForLongRunningHandlers() throws InterruptedException {
         // given
         final int total = 20;
-        final int timeout = 500;
+        final Duration timeout = Duration.ofMillis(500);
         final int parallelism = 10;
         CountDownLatch latch = new CountDownLatch(20);
 
         eventService.addHandler(
                 DummyEvent.class,
-                e -> Mono.fromCallable(() -> {
-                    try {
-                        MILLISECONDS.sleep(500);
-                        latch.countDown();
-                        return true;
-                    } catch (InterruptedException ex) {
-                        throw new RuntimeException(ex);
-                    }
-                }),
+                e -> Mono.delay(timeout).doOnNext(v -> latch.countDown()).thenReturn(true),
                 parallelism
         );
         // and events are enqueued
         enqueue(total).block();
-        assertEventsCount(total);
+        assertScheduledMessagesInZsetCount(total);
+
+
         // when
         eventService.dispatchDelayedMessages();
         // then task execution takes 500, 20 should complete in 1000 (with parallelism of 10), 100 ms as reserve
-        assertThat(latch.await(total / parallelism * timeout + 100, MILLISECONDS), equalTo(true));
+
+        assertThat(latch.await(total / parallelism * timeout.toMillis() + 100, MILLISECONDS)).isTrue();
     }
 
     @Test
@@ -290,7 +277,7 @@ class DelayedEventServiceTest {
                 .collect(toList())
         ).then().block();
         // then
-        assertEventsCount(50L);
+        assertScheduledMessagesInZsetCount(50L);
     }
 
     @Test
@@ -304,7 +291,8 @@ class DelayedEventServiceTest {
         connection.lpush(toQueueName(DummyEvent.class), "[unserializable}");
         eventService.dispatchDelayedMessages();
         // and all events are moved to list
-        assertThat(connection.llen(toQueueName(DummyEvent.class)), equalTo((long) total + 1));
+        // todo proper name
+        assertThat(connection.llen(toQueueName(DummyEvent.class))).isEqualTo( total + 1);
         // when
         CountDownLatch latch = new CountDownLatch(total + 1);
         eventService.addHandler(
@@ -331,7 +319,7 @@ class DelayedEventServiceTest {
         createRedisProxy();
         // then new event is handled
         enqueue(1).block();
-        assertEventsCount(1L);
+        assertScheduledMessagesInZsetCount(1L);
         eventService.dispatchDelayedMessages();
         waitAndAssertEventsCount(0L);
     }
@@ -344,7 +332,7 @@ class DelayedEventServiceTest {
         MILLISECONDS.sleep(POLLING_TIMEOUT.toMillis() + 100);
         // and and event is queued
         enqueue(1).block();
-        assertEventsCount(1L);
+        assertScheduledMessagesInZsetCount(1L);
         // then
         eventService.dispatchDelayedMessages();
         waitAndAssertEventsCount(0L);
@@ -410,7 +398,7 @@ class DelayedEventServiceTest {
         eventService.dispatchDelayedMessages();
         double postDispatchScore = connection.zscore(DELAYED_QUEUE, DelayedEventService.getKey(event));
         // then the post dispatch score is 10 sec ahead
-        assertThat(postDispatchScore - initialScore, greaterThan(10000.0));
+        assertThat(postDispatchScore - initialScore).isGreaterThan(10000.0);
     }
 
     @Test
@@ -420,12 +408,12 @@ class DelayedEventServiceTest {
         int total = SCHEDULING_BATCH_SIZE + extra;
         // and events are scheduled
         enqueue(total).block();
-        assertEventsCount(total);
+        assertScheduledMessagesInZsetCount(total);
         long maxScore = System.currentTimeMillis();
         // when
         eventService.dispatchDelayedMessages();
         // then only SCHEDULING_BATCH_SIZE are rescheduled
-        assertThat(connection.zcount(DELAYED_QUEUE, Range.create(0, maxScore)), equalTo((long) extra));
+        assertThat(connection.zcount(DELAYED_QUEUE, Range.create(0, maxScore))).isEqualTo(extra);
     }
 
     @Test
@@ -436,7 +424,7 @@ class DelayedEventServiceTest {
         eventService.enqueueWithDelayNonBlocking(event, Duration.ZERO).block();
         eventService.enqueueWithDelayNonBlocking(event, Duration.ZERO).block();
         // then
-        assertEventsCount(1L);
+        assertScheduledMessagesInZsetCount(1L);
     }
 
     @Test
@@ -448,8 +436,8 @@ class DelayedEventServiceTest {
         eventService.dispatchDelayedMessages();
         waitAndAssertEventsCount(0L);
         // when
-        assertThat(eventService.removeHandler(DummyEvent.class), equalTo(true));
-        assertThat(eventService.removeHandler(DummyEvent.class), equalTo(false));
+        assertThat(eventService.removeHandler(DummyEvent.class)).isTrue();
+        assertThat(eventService.removeHandler(DummyEvent.class)).isFalse();
         // then new events are not handled
         enqueue(10).block();
         waitAndAssertEventsCount(10L);
@@ -462,12 +450,12 @@ class DelayedEventServiceTest {
         // when
         eventService.addHandler(DummyEvent.class, DUMMY_HANDLER, 1);
         sleepMillis(100);
-        assertThat(serviceConnectionsCount() - initNumber, is(1));
+        assertThat(serviceConnectionsCount() - initNumber).isEqualTo(1);
         // and subscription is refreshed
         eventService.refreshSubscriptions();
         sleepMillis(100);
         // then
-        assertThat(serviceConnectionsCount() - initNumber, is(1));
+        assertThat(serviceConnectionsCount() - initNumber).isEqualTo(1);
     }
 
     @Test
@@ -537,11 +525,11 @@ class DelayedEventServiceTest {
             }
         }
 
-        assertEventsCount(expected);
+        assertScheduledMessagesInZsetCount(expected);
     }
 
-    private void assertEventsCount(long expected) {
-        assertThat(connection.zcard(DELAYED_QUEUE), equalTo(expected));
+    private void assertScheduledMessagesInZsetCount(long expected) {
+        assertThat(connection.zcard(DELAYED_QUEUE)).isEqualTo(expected);
     }
 
     private void sleepMillis(long duration) {
