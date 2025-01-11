@@ -8,7 +8,6 @@ it is suitable for many use cases.
 
 Key features are:
 - event handling is retriable at increased intervals between attempts
-- subscription context could be passed to a handler
 - support for the `@PreDestroy` lifecycle annotation
 - sending metrics using [Micrometer](https://github.com/micrometer-metrics/micrometer)
 
@@ -27,7 +26,7 @@ repositories {
 
 ```groovy
 dependencies {
-    implementation 'com.github.fred84:delayedQueue:0.4.0'
+    implementation 'com.github.fred84:delayedQueue:0.5.0'
 }
 ```
 
@@ -54,7 +53,6 @@ eventService = delayedEventService()
         .schedulingBatchSize(SCHEDULING_BATCH_SIZE)
         .enableScheduling(false)
         .pollingTimeout(POLLING_TIMEOUT)
-        .eventContextHandler(new DefaultEventContextHandler())
         .dataSetPrefix("")
         .retryAttempts(10)
         .metrics(new NoopMetrics())
@@ -78,24 +76,6 @@ eventService.enqueueWithDelayNonBlocking(new DummyEvent("1"), Duration.ofHours(1
 
 ```java
 eventService.close();
-```
-
-### Event context
-
-```java
-eventService.addHandler(
-        DummyEvent.class,
-        e -> Mono
-            .subscriberContext()
-            .doOnNext(ctx -> {
-                Map<String, String> eventContext = ctx.get("eventContext");
-                log.info("context key {}", eventContext.get("key"));
-            })
-            .thenReturn(true),
-        1
-);
-
-eventService.enqueueWithDelayNonBlocking(new DummyEvent("1"), Duration.ofHours(1), Map.of("key", "value")).subscribe();
 ```
 
 ## Contribution

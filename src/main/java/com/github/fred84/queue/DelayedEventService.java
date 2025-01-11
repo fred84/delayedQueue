@@ -30,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import javax.annotation.PreDestroy;
 import org.jetbrains.annotations.NotNull;
@@ -153,9 +154,6 @@ public class DelayedEventService implements Closeable {
 
     private static final String DELIMITER = "###";
     private static final Logger LOG = LoggerFactory.getLogger(DelayedEventService.class);
-    private static final String ENQUEUE_SCRIPT = "redis.call('HSET', KEYS[1], ARGV[1], ARGV[2]); " +
-            "redis.call('ZADD', KEYS[2], 'NX', ARGV[3], ARGV[1]); " +
-            "return 'OK'";
 
     private final Map<Class<? extends Event>, HandlerAndSubscription<? extends Event>> subscriptions = new ConcurrentHashMap<>();
 
@@ -178,6 +176,8 @@ public class DelayedEventService implements Closeable {
     private final String zsetName;
     private final String lockKey;
     private final String metadataHset;
+
+    volatile Consumer<Boolean> postDeleteInterceptor;
 
     private DelayedEventService(Builder builder) {
         mapper = requireNonNull(builder.mapper, "object mapper");
@@ -292,12 +292,19 @@ public class DelayedEventService implements Closeable {
 
     private Mono<TransactionResult> enqueueWithDelayInner(Event event, Duration delay) {
         return executeInTransaction(() -> {
-            String key = getKey(event);
-            String rawEnvelope = serialize(EventEnvelope.create(event, Collections.emptyMap()));
+                    String key = getKey(event);
+                    String rawEnvelope = serialize(EventEnvelope.create(event, Collections.emptyMap()));
 
-            reactiveCommands.hset(metadataHset, key, rawEnvelope).subscribeOn(single).subscribe();
-            reactiveCommands.zadd(zsetName, nx(), (System.currentTimeMillis() + delay.toMillis()), key).subscribeOn(single).subscribe();
-        }).doOnNext(v -> metrics.incrementEnqueueCounter(event.getClass()));
+                    reactiveCommands
+                            .hset(metadataHset, key, rawEnvelope)
+                            .subscribeOn(single)
+                            .subscribe();
+                    reactiveCommands
+                            .zadd(zsetName, nx(), (System.currentTimeMillis() + delay.toMillis()), key)
+                            .subscribeOn(single)
+                            .subscribe();
+                }
+        ).doOnNext(v -> metrics.incrementEnqueueCounter(event.getClass()));
     }
 
     void dispatchDelayedMessages() {
@@ -378,12 +385,17 @@ public class DelayedEventService implements Closeable {
         return subscription;
     }
 
-    private Mono<TransactionResult> removeFromDelayedQueue(Event event) {
-        return executeInTransaction(() -> {
+    private Mono<Boolean> removeFromDelayedQueue(Event event) {
+        Mono<Boolean> command = executeInTransaction(() -> {
             String key = getKey(event);
             reactiveCommands.hdel(metadataHset, key).subscribeOn(single).subscribe();
             reactiveCommands.zrem(zsetName, key).subscribeOn(single).subscribe();
-        });
+        }).map(v -> true);
+
+        if (postDeleteInterceptor != null) {
+            return command.doOnNext(postDeleteInterceptor);
+        }
+        return command;
     }
 
     private Mono<TransactionResult> executeInTransaction(Runnable commands) {
