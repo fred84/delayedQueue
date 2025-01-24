@@ -18,7 +18,7 @@ jobs:
       - checkout
       - run:
           name: "check"
-          command: "gradle check"
+          command: "gradle check --info"
 
 workflows:
   say-hello-workflow:
