@@ -142,7 +142,7 @@ class DelayedEventServiceTest {
 
     private static final Logger LOG = LoggerFactory.getLogger(DelayedEventServiceTest.class);
     private static final String DELAYED_QUEUE = "delayed_events";
-    private static final String TOXIPROXY_IP = ofNullable(System.getenv("TOXIPROXY_IP")).orElse("127.0.0.1");
+    private static final String TOXIPROXY_IP = ofNullable(System.getenv("TOXIPROXY_IP")).orElseThrow(() -> new RuntimeException("oops"));
 
     private static final Duration POLLING_TIMEOUT = Duration.ofSeconds(1);
     private static final Function<DummyEvent, Mono<Boolean>> DUMMY_HANDLER = e -> Mono.just(true);
