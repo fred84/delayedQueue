@@ -160,6 +160,9 @@ class DelayedEventServiceTest {
     void setUp() throws IOException {
         removeOldProxies();
         redisProxy = createRedisProxy();
+
+        LOG.info("Redis proxy: {}", redisProxy.getName());
+
         redisClient = RedisClient.create("redis://" + TOXIPROXY_IP + ":63790");
         redisClient.setOptions(
                 ClientOptions.builder()

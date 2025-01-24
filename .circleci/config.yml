@@ -6,13 +6,13 @@ jobs:
       - image: gradle:8.12-jdk21
 
       - image: redis:4-alpine
-        name: redis
+        name: dq_redis
 
       - image: shopify/toxiproxy:latest
-        name: toxiproxy
+        name: dq_toxiproxy
 
     environment:
-      TOXIPROXY_IP: toxiproxy
+      TOXIPROXY_IP: dq_toxiproxy
 
     steps:
       - checkout
