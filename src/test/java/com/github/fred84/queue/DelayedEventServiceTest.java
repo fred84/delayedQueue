@@ -16,6 +16,7 @@ import io.lettuce.core.ClientOptions;
 import io.lettuce.core.Range;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisException;
+import io.lettuce.core.RedisURI;
 import io.lettuce.core.TimeoutOptions;
 import io.lettuce.core.api.sync.RedisCommands;
 import java.beans.ConstructorProperties;
@@ -140,9 +141,8 @@ class DelayedEventServiceTest {
         }
     }
 
-    private static final Logger LOG = LoggerFactory.getLogger(DelayedEventServiceTest.class);
     private static final String DELAYED_QUEUE = "delayed_events";
-    private static final String TOXIPROXY_IP = ofNullable(System.getenv("TOXIPROXY_IP")).orElseThrow(() -> new RuntimeException("oops"));
+    private static final String TOXIPROXY_IP = ofNullable(System.getenv("TOXIPROXY_IP")).orElse("127.0.0.1");
 
     private static final Duration POLLING_TIMEOUT = Duration.ofSeconds(1);
     private static final Function<DummyEvent, Mono<Boolean>> DUMMY_HANDLER = e -> Mono.just(true);
@@ -161,9 +161,7 @@ class DelayedEventServiceTest {
         removeOldProxies();
         redisProxy = createRedisProxy();
 
-        LOG.info("Redis proxy: {}", redisProxy.getName());
-
-        redisClient = RedisClient.create("redis://" + TOXIPROXY_IP + ":63790");
+        redisClient = RedisClient.create(new RedisURI(TOXIPROXY_IP, 63790, Duration.ofSeconds(10)));
         redisClient.setOptions(
                 ClientOptions.builder()
                         .timeoutOptions(TimeoutOptions.builder().timeoutCommands().fixedTimeout(Duration.ofMillis(500)).build())
