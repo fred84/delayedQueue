@@ -52,7 +52,7 @@ public class DelayedEventService implements Closeable {
         private boolean enableScheduling = true;
         private Duration schedulingInterval = Duration.ofMillis(500);
         private int schedulingBatchSize = 100;
-        private Scheduler scheduler = Schedulers.elastic();
+        private Scheduler scheduler = Schedulers.boundedElastic();
         private int retryAttempts = 70;
         private Metrics metrics = new NoopMetrics();
         private String dataSetPrefix = "de_";
