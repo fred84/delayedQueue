@@ -16,6 +16,7 @@ import io.lettuce.core.ClientOptions;
 import io.lettuce.core.Range;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisException;
+import io.lettuce.core.RedisURI;
 import io.lettuce.core.TimeoutOptions;
 import io.lettuce.core.api.sync.RedisCommands;
 import java.beans.ConstructorProperties;
@@ -33,8 +34,6 @@ import java.util.stream.IntStream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
@@ -140,7 +139,6 @@ class DelayedEventServiceTest {
         }
     }
 
-    private static final Logger LOG = LoggerFactory.getLogger(DelayedEventServiceTest.class);
     private static final String DELAYED_QUEUE = "delayed_events";
     private static final String TOXIPROXY_IP = ofNullable(System.getenv("TOXIPROXY_IP")).orElse("127.0.0.1");
 
@@ -160,7 +158,8 @@ class DelayedEventServiceTest {
     void setUp() throws IOException {
         removeOldProxies();
         redisProxy = createRedisProxy();
-        redisClient = RedisClient.create("redis://" + TOXIPROXY_IP + ":63790");
+
+        redisClient = RedisClient.create(new RedisURI(TOXIPROXY_IP, 63790, Duration.ofSeconds(10)));
         redisClient.setOptions(
                 ClientOptions.builder()
                         .timeoutOptions(TimeoutOptions.builder().timeoutCommands().fixedTimeout(Duration.ofMillis(500)).build())

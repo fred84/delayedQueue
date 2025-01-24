@@ -1,0 +1,26 @@
+version: 2.1
+
+jobs:
+  check:
+    docker:
+      - image: gradle:8.12-jdk21
+
+      - image: redis:4-alpine
+        name: dq_redis
+
+      - image: shopify/toxiproxy:latest
+        name: dq_toxiproxy
+
+    environment:
+      TOXIPROXY_IP: dq_toxiproxy
+
+    steps:
+      - checkout
+      - run:
+          name: "check"
+          command: "gradle check"
+
+workflows:
+  say-hello-workflow:
+    jobs:
+      - check

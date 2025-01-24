@@ -1,7 +1,5 @@
 # Delayed queue
 
-[![Build Status](https://travis-ci.com/fred84/delayedQueue.svg?branch=master)](https://travis-ci.com/fred84/delayedQueue)
-
 `DelayedQueue` is a library to enqueue and later handle immutable events. It is written in `java` on top of [reactor](https://github.com/reactor) and [lettuce](https://github.com/lettuce-io/lettuce-core).
 [Redis](https://redis.io) is the only available storage engine. Queue doesn't provide durability guarantees but in pair with clusterized `redis` installation 
 it is suitable for many use cases.
