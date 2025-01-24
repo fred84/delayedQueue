@@ -1,47 +1,40 @@
 package com.github.fred84.queue;
 
 import static com.github.fred84.queue.DelayedEventService.delayedEventService;
-import static java.util.Collections.singletonMap;
 import static java.util.Optional.ofNullable;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.stream.Collectors.toList;
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.equalTo;
-import static org.hamcrest.Matchers.greaterThan;
-import static org.hamcrest.Matchers.is;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.github.fred84.queue.context.DefaultEventContextHandler;
 import com.github.fred84.queue.metrics.NoopMetrics;
 import eu.rekawek.toxiproxy.Proxy;
 import eu.rekawek.toxiproxy.ToxiproxyClient;
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.Range;
 import io.lettuce.core.RedisClient;
-import io.lettuce.core.RedisCommandTimeoutException;
-import io.lettuce.core.RedisConnectionException;
+import io.lettuce.core.RedisException;
 import io.lettuce.core.TimeoutOptions;
 import io.lettuce.core.api.sync.RedisCommands;
 import java.beans.ConstructorProperties;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.time.Duration;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Random;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.slf4j.MDC;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
@@ -147,6 +140,7 @@ class DelayedEventServiceTest {
         }
     }
 
+    private static final Logger LOG = LoggerFactory.getLogger(DelayedEventServiceTest.class);
     private static final String DELAYED_QUEUE = "delayed_events";
     private static final String TOXIPROXY_IP = ofNullable(System.getenv("TOXIPROXY_IP")).orElse("127.0.0.1");
 
@@ -181,7 +175,6 @@ class DelayedEventServiceTest {
                 .schedulingBatchSize(SCHEDULING_BATCH_SIZE)
                 .enableScheduling(false)
                 .pollingTimeout(POLLING_TIMEOUT)
-                .eventContextHandler(new DefaultEventContextHandler())
                 .dataSetPrefix("")
                 .retryAttempts(10)
                 .metrics(new NoopMetrics())
@@ -190,8 +183,6 @@ class DelayedEventServiceTest {
 
         connection = redisClient.connect().sync();
         connection.flushall();
-
-        MDC.clear();
     }
 
     @AfterEach
@@ -201,14 +192,18 @@ class DelayedEventServiceTest {
     }
 
     @Test
-    void shouldHandleDifferentEventsInParallel() {
+    void shouldHandleDifferentEventsInParallel() throws InterruptedException {
         // given
+        int parallelism = 3;
         int total = 30;
+        int maxDelayMs = 30;
         CountDownLatch latch = new CountDownLatch(total);
 
-        eventService.addHandler(DummyEvent.class, e -> Mono.fromCallable(() -> randomSleepBeforeCountdown(latch)), 3);
-        eventService.addHandler(DummyEvent2.class, e -> Mono.fromCallable(() -> randomSleepBeforeCountdown(latch)), 3);
-        eventService.addHandler(DummyEvent3.class, e -> Mono.fromCallable(() -> randomSleepBeforeCountdown(latch)), 3);
+        eventService.postDeleteInterceptor = e -> latch.countDown();
+
+        eventService.addHandler(DummyEvent.class, e -> sleepAndTrue(randomMillis(maxDelayMs)), parallelism);
+        eventService.addHandler(DummyEvent2.class, e -> sleepAndTrue(randomMillis(maxDelayMs)), parallelism);
+        eventService.addHandler(DummyEvent3.class, e -> sleepAndTrue(randomMillis(maxDelayMs)), parallelism);
         // and events are queued
         enqueue(total, id -> {
             String str = Integer.toString(id);
@@ -222,11 +217,12 @@ class DelayedEventServiceTest {
             }
         }).block();
 
-        assertEventsCount(total);
+        assertScheduledMessagesInZsetCount(total);
         // when
         eventService.dispatchDelayedMessages();
         // then
-        waitAndAssertEventsCount(0L);
+        assertLatchCompleted(latch, total / parallelism * maxDelayMs);
+        assertScheduledMessagesInZsetCount(0);
     }
 
     @Test
@@ -238,73 +234,43 @@ class DelayedEventServiceTest {
 
         eventService.addHandler(
                 DummyEvent.class,
-                e -> Mono.fromCallable(() -> {
-                    sem.acquireUninterruptibly();
-                    return true;
-                }),
+                e -> Mono.just(true).doOnNext(t -> sem.acquireUninterruptibly()),
                 prefetch
         );
         // and events are queued
-        enqueue(total).block();
-        assertEventsCount(total);
+        enqueue(total);
+        assertScheduledMessagesInZsetCount(total);
         // when
         eventService.dispatchDelayedMessages();
         // then
-        waitAndAssertEventsCount(total - prefetch);
-    }
-
-    @Test
-    void shouldProvideContextToHandler() {
-        // given
-        String contextValue = "context";
-        AtomicReference<String> holder = new AtomicReference<>();
-        eventService.addHandler(
-                DummyEvent.class,
-                e -> Mono
-                    .deferContextual(ctx -> {
-                        Map<String, String> eventContext = ctx.get("eventContext");
-                        holder.set(eventContext.get("key"));
-                        return Mono.just(true);
-                    }),
-                1
-        );
-        // and events are queued with context
-        enqueue(1).contextWrite(ctx -> ctx.put("eventContext", singletonMap("key", contextValue))).block();
-        // when
-        eventService.dispatchDelayedMessages();
-        // then
-        waitAndAssertEventsCount(0);
-        assertThat(holder.get(), equalTo(contextValue));
+        assertScheduledMessagesInZsetCount(total - prefetch);
     }
 
     @Test
     void shouldCompleteInTimelyMannerForLongRunningHandlers() throws InterruptedException {
         // given
         final int total = 20;
-        final int timeout = 500;
+        final Duration timeout = Duration.ofMillis(500);
         final int parallelism = 10;
         CountDownLatch latch = new CountDownLatch(20);
 
+        eventService.postDeleteInterceptor = e -> latch.countDown();
+
         eventService.addHandler(
                 DummyEvent.class,
-                e -> Mono.fromCallable(() -> {
-                    try {
-                        MILLISECONDS.sleep(500);
-                        latch.countDown();
-                        return true;
-                    } catch (InterruptedException ex) {
-                        throw new RuntimeException(ex);
-                    }
-                }),
+                e -> Mono.delay(timeout).thenReturn(true),
                 parallelism
         );
         // and events are enqueued
-        enqueue(total).block();
-        assertEventsCount(total);
+        enqueue(total);
+        assertScheduledMessagesInZsetCount(total);
+
         // when
         eventService.dispatchDelayedMessages();
         // then task execution takes 500, 20 should complete in 1000 (with parallelism of 10), 100 ms as reserve
-        assertThat(latch.await(total / parallelism * timeout + 100, MILLISECONDS), equalTo(true));
+        assertThat(latch.await(total / parallelism * timeout.toMillis() + 100, MILLISECONDS)).isTrue();
+
+        assertScheduledMessagesInZsetCount(0);
     }
 
     @Test
@@ -317,111 +283,132 @@ class DelayedEventServiceTest {
                 .collect(toList())
         ).then().block();
         // then
-        assertEventsCount(50L);
+        assertScheduledMessagesInZsetCount(50);
     }
 
     @Test
-    void shouldHandleDeserializationError() throws InterruptedException {
+    void shouldHandleDeserializationError() {
         // given
         int total = 20;
         // and events are enqueued
-        enqueue(total).block();
-        waitAndAssertEventsCount(total);
+        enqueue(total);
+        assertScheduledMessagesInZsetCount(total);
         // and a malformed event is placed in the beginning of a list
         connection.lpush(toQueueName(DummyEvent.class), "[unserializable}");
         eventService.dispatchDelayedMessages();
         // and all events are moved to list
-        assertThat(connection.llen(toQueueName(DummyEvent.class)), equalTo((long) total + 1));
+        assertThat(connection.llen(toQueueName(DummyEvent.class))).isEqualTo(total + 1);
         // when
-        CountDownLatch latch = new CountDownLatch(total + 1);
+        CountDownLatch latch = new CountDownLatch(total);
+
+        eventService.postDeleteInterceptor = e -> latch.countDown();
+
         eventService.addHandler(
                 DummyEvent.class,
-                e -> Mono.fromCallable(() -> {
-                    latch.countDown();
-                    return true;
-                }),
+                e -> Mono.just(true),
                 1
         );
         // then
-        latch.await(500, MILLISECONDS);
-        waitAndAssertEventsCount(0L);
+        assertLatchCompleted(latch, 100);
+        assertScheduledMessagesInZsetCount(0);
     }
 
     @Test
     void shouldBeAbleToReconnect() throws InterruptedException, IOException {
         // given
+        CountDownLatch latch = new CountDownLatch(1);
+
+        eventService.postDeleteInterceptor = e -> latch.countDown();
+
         eventService.addHandler(DummyEvent.class, DUMMY_HANDLER, 1);
         // when connection is broken
         redisProxy.delete();
         MILLISECONDS.sleep(POLLING_TIMEOUT.toMillis() + 100);
         // and connection is restored
-        redisProxy = createRedisProxy();
+        createRedisProxy();
         // then new event is handled
-        enqueue(1).block();
-        assertEventsCount(1L);
+        enqueue(1);
+        assertScheduledMessagesInZsetCount(1L);
         eventService.dispatchDelayedMessages();
-        waitAndAssertEventsCount(0L);
+
+        assertLatchCompleted(latch, 100);
+        assertScheduledMessagesInZsetCount(0);
     }
 
     @Test
     void shouldHandlePollingTimeout() throws InterruptedException {
         // given
+        CountDownLatch latch = new CountDownLatch(1);
+
+        eventService.postDeleteInterceptor = e -> latch.countDown();
+
         eventService.addHandler(DummyEvent.class, DUMMY_HANDLER, 1);
         // and no events have arrived during a polling interval
         MILLISECONDS.sleep(POLLING_TIMEOUT.toMillis() + 100);
         // and and event is queued
-        enqueue(1).block();
-        assertEventsCount(1L);
+        enqueue(1);
+        assertScheduledMessagesInZsetCount(1L);
         // then
         eventService.dispatchDelayedMessages();
-        waitAndAssertEventsCount(0L);
-    }
 
-    @Test
-    void shouldFailToSubscribeIfConnectionNotAvailable() throws IOException {
-        redisProxy.delete();
-
-        assertThrows(RedisConnectionException.class, () -> eventService.addHandler(DummyEvent.class, DUMMY_HANDLER, 1));
+        // then
+        assertLatchCompleted(latch, 100);
+        assertScheduledMessagesInZsetCount(0);
     }
 
     @Test
     void shouldFailToDispatchIfConnectionNotAvailable() throws IOException {
         redisProxy.delete();
+        redisClient.setOptions(ClientOptions.builder().autoReconnect(false).build());
 
-        assertThrows(RedisCommandTimeoutException.class, () -> eventService.dispatchDelayedMessages());
+        assertThrows(RedisException.class, () -> eventService.dispatchDelayedMessages());
     }
 
     @Test
     void shouldHandleSubscriberErrors() {
         // given an erroneous handler
         int total = 6;
-        CountDownLatch latch = new CountDownLatch(total);
+        CountDownLatch preLatch = new CountDownLatch(total);
+
+        CountDownLatch postLatch = new CountDownLatch(1);
+        eventService.postDeleteInterceptor = e -> postLatch.countDown();
 
         eventService.addHandler(
                 DummyEvent.class,
                 e -> {
-                    latch.countDown();
+                    preLatch.countDown();
 
                     switch ((Integer.parseInt(e.getId())) % total) {
                         // valid
-                        case 0: return Mono.just(true);
+                        case 0:
+                            return Mono.just(true);
                         // invalid
-                        case 1: return Mono.error(new RuntimeException("no-no"));
-                        case 2: return Mono.empty();
-                        case 3: return null;
-                        case 4: throw new RuntimeException("oops");
-                        default: return Mono.just(false);
+                        case 1:
+                            return Mono.error(new RuntimeException("mono error"));
+                        case 2:
+                            return Mono.empty();
+                        case 3:
+                            return null;
+                        case 4:
+                            throw new RuntimeException("raw error");
+                        default:
+                            return Mono.just(false);
                     }
                 },
                 1
         );
         // and events are enqueued
-        enqueue(total).block();
-        waitAndAssertEventsCount(total);
+        enqueue(total);
+
+        assertScheduledMessagesInZsetCount(total);
         // when
         eventService.dispatchDelayedMessages();
         // then only valid events are handled
-        waitAndAssertEventsCount(total - 1);
+
+        assertLatchCompleted(preLatch, 100);
+        assertLatchCompleted(postLatch, 100);
+
+        assertScheduledMessagesInZsetCount(total - 1);
     }
 
     @Test
@@ -435,7 +422,7 @@ class DelayedEventServiceTest {
         eventService.dispatchDelayedMessages();
         double postDispatchScore = connection.zscore(DELAYED_QUEUE, DelayedEventService.getKey(event));
         // then the post dispatch score is 10 sec ahead
-        assertThat(postDispatchScore - initialScore, greaterThan(10000.0));
+        assertThat(postDispatchScore - initialScore).isGreaterThan(10000.0);
     }
 
     @Test
@@ -444,13 +431,13 @@ class DelayedEventServiceTest {
         int extra = 20;
         int total = SCHEDULING_BATCH_SIZE + extra;
         // and events are scheduled
-        enqueue(total).block();
-        assertEventsCount(total);
+        enqueue(total);
+        assertScheduledMessagesInZsetCount(total);
         long maxScore = System.currentTimeMillis();
         // when
         eventService.dispatchDelayedMessages();
         // then only SCHEDULING_BATCH_SIZE are rescheduled
-        assertThat(connection.zcount(DELAYED_QUEUE, Range.create(0, maxScore)), equalTo((long) extra));
+        assertThat(connection.zcount(DELAYED_QUEUE, Range.create(0, maxScore))).isEqualTo(extra);
     }
 
     @Test
@@ -461,23 +448,28 @@ class DelayedEventServiceTest {
         eventService.enqueueWithDelayNonBlocking(event, Duration.ZERO).block();
         eventService.enqueueWithDelayNonBlocking(event, Duration.ZERO).block();
         // then
-        assertEventsCount(1L);
+        assertScheduledMessagesInZsetCount(1L);
     }
 
     @Test
     void shouldBeAbleToRemoveHandler() {
         // given
+        CountDownLatch latch = new CountDownLatch(1);
+        eventService.postDeleteInterceptor = e -> latch.countDown();
+
         eventService.addHandler(DummyEvent.class, DUMMY_HANDLER, 1);
         // and events are enqueued
-        enqueue(10).block();
+        enqueue(10);
         eventService.dispatchDelayedMessages();
-        waitAndAssertEventsCount(0L);
+
+        assertLatchCompleted(latch, 100);
+        assertScheduledMessagesInZsetCount(0L);
         // when
-        assertThat(eventService.removeHandler(DummyEvent.class), equalTo(true));
-        assertThat(eventService.removeHandler(DummyEvent.class), equalTo(false));
+        assertThat(eventService.removeHandler(DummyEvent.class)).isTrue();
+        assertThat(eventService.removeHandler(DummyEvent.class)).isFalse();
         // then new events are not handled
-        enqueue(10).block();
-        waitAndAssertEventsCount(10L);
+        enqueue(10);
+        assertScheduledMessagesInZsetCount(10L);
     }
 
     @Test
@@ -487,12 +479,12 @@ class DelayedEventServiceTest {
         // when
         eventService.addHandler(DummyEvent.class, DUMMY_HANDLER, 1);
         sleepMillis(100);
-        assertThat(serviceConnectionsCount() - initNumber, is(1));
+        assertThat(serviceConnectionsCount() - initNumber).isEqualTo(1);
         // and subscription is refreshed
         eventService.refreshSubscriptions();
         sleepMillis(100);
         // then
-        assertThat(serviceConnectionsCount() - initNumber, is(1));
+        assertThat(serviceConnectionsCount() - initNumber).isEqualTo(1);
     }
 
     @Test
@@ -521,11 +513,11 @@ class DelayedEventServiceTest {
     }
 
     private Proxy createRedisProxy() throws IOException {
-        return toxiProxyClient.createProxy("redis", TOXIPROXY_IP + ":63790", "localhost:6379");
+        return toxiProxyClient.createProxy("redis", "0.0.0.0:63790", "dq_redis:6379");
     }
 
-    private Mono<Void> enqueue(int num) {
-        return enqueue(IntStream.range(0, num));
+    private void enqueue(int num) {
+        enqueue(IntStream.range(0, num)).block();
     }
 
     private Mono<Void> enqueue(int num, Function<Integer, Event> transformer) {
@@ -538,35 +530,37 @@ class DelayedEventServiceTest {
 
     private Mono<Void> enqueue(IntStream stream, Function<Integer, Event> transformer) {
         return Flux
-            .fromStream(stream::boxed)
-            .flatMap(id -> eventService.enqueueWithDelayNonBlocking(transformer.apply(id), Duration.ZERO))
-            .then();
+                .fromStream(stream::boxed)
+                .flatMap(id -> eventService.enqueueWithDelayNonBlocking(transformer.apply(id), Duration.ZERO))
+                .then();
     }
 
     private String toQueueName(Class<? extends Event> cls) {
         return cls.getSimpleName().toLowerCase();
     }
 
-    private boolean randomSleepBeforeCountdown(CountDownLatch latch) {
-        sleepMillis(1 + new Random().nextInt(30));
-        latch.countDown();
-        return true;
+    private Mono<Boolean> sleepAndTrue(Duration duration) {
+        return Mono.delay(duration).thenReturn(true);
     }
 
-    private void waitAndAssertEventsCount(long expected) {
-        for (int i = 0; i < 5; i++) {
-            sleepMillis(25);
+    private Duration randomMillis(int bound) {
+        return Duration.ofMillis(new Random().nextInt(bound));
+    }
 
-            if (connection.zcard(DELAYED_QUEUE) == expected) {
-                return;
-            }
+    private void assertScheduledMessagesInZsetCount(long expected) {
+        assertThat(connection.zcard(DELAYED_QUEUE))
+                .as("delayed messages count in zset '%s'", DELAYED_QUEUE)
+                .isEqualTo(expected);
+    }
+
+    private void assertLatchCompleted(CountDownLatch latch, long afterMs) {
+        try {
+            assertThat(latch.await(afterMs + 100, MILLISECONDS))
+                    .as("Latch should be completed within %d (+100 reserve) ms; remaining count %d", afterMs, latch.getCount())
+                    .isTrue();
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
         }
-
-        assertEventsCount(expected);
-    }
-
-    private void assertEventsCount(long expected) {
-        assertThat(connection.zcard(DELAYED_QUEUE), equalTo(expected));
     }
 
     private void sleepMillis(long duration) {

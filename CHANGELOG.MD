@@ -1,5 +1,13 @@
 ## Changelog
 
+### 0.5
+
+Backward incompatible change
+
+- support for context is removed
+- decreased delay between attempts 20-40
+- support for launching tests in MacOS
+
 ### 0.4
 
 Backward incompatible change
