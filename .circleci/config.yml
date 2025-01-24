@@ -6,6 +6,7 @@ jobs:
       - image: gradle:8.12-jdk21
 
     steps:
+      - checkout
       - run:
           name: "check"
           command: "gradle check"
