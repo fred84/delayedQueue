@@ -3,12 +3,12 @@ version: 2.1
 jobs:
   check:
     docker:
-      - image: cimg/openjdk:17.0
+      - image: gradle:8.12-jdk21
 
     steps:
       - run:
           name: "check"
-          command: "./gradlew check"
+          command: "gradle check"
 
 workflows:
   say-hello-workflow:
