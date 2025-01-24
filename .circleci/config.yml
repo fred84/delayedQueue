@@ -12,7 +12,7 @@ jobs:
         name: toxiproxy
 
     environment:
-      TOXIPROXY_IP: toxyproxy
+      TOXIPROXY_IP: toxiproxy
 
     steps:
       - checkout
