@@ -8,8 +8,6 @@ import static java.util.concurrent.TimeUnit.NANOSECONDS;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.github.fred84.queue.context.EventContextHandler;
-import com.github.fred84.queue.context.NoopEventContextHandler;
 import com.github.fred84.queue.metrics.Metrics;
 import com.github.fred84.queue.metrics.NoopMetrics;
 import io.lettuce.core.KeyValue;
@@ -27,10 +25,12 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.time.Duration;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import javax.annotation.PreDestroy;
 import org.jetbrains.annotations.NotNull;
@@ -55,7 +55,6 @@ public class DelayedEventService implements Closeable {
         private Scheduler scheduler = Schedulers.elastic();
         private int retryAttempts = 70;
         private Metrics metrics = new NoopMetrics();
-        private EventContextHandler eventContextHandler = new NoopEventContextHandler();
         private String dataSetPrefix = "de_";
         private Duration refreshSubscriptionInterval;
 
@@ -107,12 +106,6 @@ public class DelayedEventService implements Closeable {
         @NotNull
         public Builder metrics(@NotNull Metrics val) {
             metrics = val;
-            return this;
-        }
-
-        @NotNull
-        public Builder eventContextHandler(@NotNull EventContextHandler val) {
-            eventContextHandler = val;
             return this;
         }
 
@@ -177,7 +170,6 @@ public class DelayedEventService implements Closeable {
     private final Scheduler single = Schedulers.newSingle("redis-single");
     private final ScheduledThreadPoolExecutor dispatcherExecutor = new ScheduledThreadPoolExecutor(1);
     private final Metrics metrics;
-    private final EventContextHandler contextHandler;
     private final String dataSetPrefix;
     private final Limit schedulingBatchSize;
 
@@ -185,10 +177,11 @@ public class DelayedEventService implements Closeable {
     private final String lockKey;
     private final String metadataHset;
 
+    volatile Consumer<Boolean> postDeleteInterceptor;
+
     private DelayedEventService(Builder builder) {
         mapper = requireNonNull(builder.mapper, "object mapper");
         client = requireNonNull(builder.client, "redis client");
-        contextHandler = requireNonNull(builder.eventContextHandler, "event context handler");
         pollingTimeout = checkNotShorter(builder.pollingTimeout, Duration.ofMillis(50), "polling interval");
         lockTimeout = Duration.ofSeconds(2);
         retryAttempts = checkInRange(builder.retryAttempts, 1, 100, "retry attempts");
@@ -267,8 +260,7 @@ public class DelayedEventService implements Closeable {
         requireNonNull(delay, "delay");
         requireNonNull(event.getId(), "event id");
 
-        return Mono.subscriberContext()
-                .flatMap(ctx -> enqueueWithDelayInner(event, delay, contextHandler.eventContext(ctx)))
+        return enqueueWithDelayInner(event, delay)
                 .then();
     }
 
@@ -298,14 +290,21 @@ public class DelayedEventService implements Closeable {
         );
     }
 
-    private Mono<TransactionResult> enqueueWithDelayInner(Event event, Duration delay, Map<String, String> context) {
+    private Mono<TransactionResult> enqueueWithDelayInner(Event event, Duration delay) {
         return executeInTransaction(() -> {
-            String key = getKey(event);
-            String rawEnvelope = serialize(EventEnvelope.create(event, context));
+                    String key = getKey(event);
+                    String rawEnvelope = serialize(EventEnvelope.create(event, Collections.emptyMap()));
 
-            reactiveCommands.hset(metadataHset, key, rawEnvelope).subscribeOn(single).subscribe();
-            reactiveCommands.zadd(zsetName, nx(), (System.currentTimeMillis() + delay.toMillis()), key).subscribeOn(single).subscribe();
-        }).doOnNext(v -> metrics.incrementEnqueueCounter(event.getClass()));
+                    reactiveCommands
+                            .hset(metadataHset, key, rawEnvelope)
+                            .subscribeOn(single)
+                            .subscribe();
+                    reactiveCommands
+                            .zadd(zsetName, nx(), (System.currentTimeMillis() + delay.toMillis()), key)
+                            .subscribeOn(single)
+                            .subscribe();
+                }
+        ).doOnNext(v -> metrics.incrementEnqueueCounter(event.getClass()));
     }
 
     void dispatchDelayedMessages() {
@@ -347,7 +346,6 @@ public class DelayedEventService implements Closeable {
     ) {
         StatefulRedisConnection<String, String> pollingConnection = client.connect();
         InnerSubscriber<T> subscription = new InnerSubscriber<>(
-                contextHandler,
                 handler,
                 parallelism,
                 pollingConnection,
@@ -387,12 +385,17 @@ public class DelayedEventService implements Closeable {
         return subscription;
     }
 
-    private Mono<TransactionResult> removeFromDelayedQueue(Event event) {
-        return executeInTransaction(() -> {
+    private Mono<Boolean> removeFromDelayedQueue(Event event) {
+        Mono<Boolean> command = executeInTransaction(() -> {
             String key = getKey(event);
             reactiveCommands.hdel(metadataHset, key).subscribeOn(single).subscribe();
             reactiveCommands.zrem(zsetName, key).subscribeOn(single).subscribe();
-        });
+        }).map(v -> true);
+
+        if (postDeleteInterceptor != null) {
+            return command.doOnNext(postDeleteInterceptor);
+        }
+        return command;
     }
 
     private Mono<TransactionResult> executeInTransaction(Runnable commands) {

@@ -3,12 +3,14 @@ version: '3'
 services:
   redis:
     image: redis:4-alpine
+    container_name: dq_redis
     ports:
       - "6379:6379"
 
   # works only on linux
   toxiproxy:
     image: shopify/toxiproxy
+    container_name: dq_toxiproxy
     ports:
       - "8474:8474"
-    network_mode: "host"
+      - "63790:63790"

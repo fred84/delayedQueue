@@ -2,8 +2,6 @@ package com.github.fred84.queue;
 
 import static java.lang.Boolean.TRUE;
 
-import com.github.fred84.queue.context.EventContextHandler;
-import io.lettuce.core.TransactionResult;
 import io.lettuce.core.api.StatefulRedisConnection;
 import java.util.function.Function;
 
@@ -19,22 +17,19 @@ class InnerSubscriber<T extends Event> extends BaseSubscriber<EventEnvelope<T>> 
 
     private static final Logger LOG = LoggerFactory.getLogger(InnerSubscriber.class);
 
-    private final EventContextHandler contextHandler;
     private final Function<T, Mono<Boolean>> handler;
     private final int parallelism;
     private final StatefulRedisConnection<String, String> pollingConnection;
     private final Scheduler handlerScheduler;
-    private final Function<Event, Mono<TransactionResult>> deleteCommand;
+    private final Function<Event, Mono<Boolean>> deleteCommand;
 
     InnerSubscriber(
-            EventContextHandler contextHandler,
             Function<T, Mono<Boolean>> handler,
             int parallelism,
             StatefulRedisConnection<String, String> pollingConnection,
             Scheduler handlerScheduler,
-            Function<Event, Mono<TransactionResult>> deleteCommand
+            Function<Event, Mono<Boolean>> deleteCommand
     ) {
-        this.contextHandler = contextHandler;
         this.handler = handler;
         this.parallelism = parallelism;
         this.pollingConnection = pollingConnection;
@@ -62,6 +57,7 @@ class InnerSubscriber<T extends Event> extends BaseSubscriber<EventEnvelope<T>> 
         }
 
         if (promise == null) {
+            LOG.error("null is returned from the handler");
             requestInner(1);
             return;
         }
@@ -74,13 +70,12 @@ class InnerSubscriber<T extends Event> extends BaseSubscriber<EventEnvelope<T>> 
                     if (TRUE.equals(completed)) {
                         LOG.debug("deleting event {} from delayed queue", envelope.getPayload());
                         // todo we could also fail here!!! test me! with latch and toxyproxy
-                        return deleteCommand.apply(envelope.getPayload()).map(r -> true);
+                        return deleteCommand.apply(envelope.getPayload());
                     } else {
                         return Mono.just(true);
                     }
                 })
                 .subscribeOn(handlerScheduler)
-                .subscriberContext(c -> contextHandler.subscriptionContext(c, envelope.getLogContext()))
                 .subscribe(r -> {
                     LOG.debug("event processing completed [{}]", envelope);
                     requestInner(1);
