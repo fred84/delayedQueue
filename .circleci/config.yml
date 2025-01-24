@@ -5,6 +5,15 @@ jobs:
     docker:
       - image: gradle:8.12-jdk21
 
+      - image: redis:4-alpine
+        name: redis
+
+      - image: shopify/toxiproxy:latest
+        name: toxiproxy
+
+    environment:
+      TOXIPROXY_IP: toxyproxy
+
     steps:
       - checkout
       - run:
